@@ -7,6 +7,13 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+# from mpl_toolkits.mplot3d import Axes3D
+# import keyboard
+# from ipywidgets import Label, HTML, HBox, Image, VBox, Box
+# from ipyevents import Event
+# from IPython.display import display
+from getkey import getkey, keys
+
 
 # =============================================================================
 #                                 Functions
@@ -46,29 +53,74 @@ def set_ghost(u, u_B):
 
     return u
 
+def make_plot(ax, x, y, u, v, **kwargs):
+    # Handling optional arguments
+    LB = kwargs.get("LB",[])
+    UB = kwargs.get("UB",[])
+    plot_type = kwargs.get("plot_type","profile")
+    sub_type = kwargs.get("sub_type",["u","y"])
+
+    # Plotting the velocity profile
+    # --> Plotting
+    plt.cla()
+
+    vars = [[],[]]
+    if plot_type.lower() == "profile":
+        for i in range(len(sub_type)):
+            if "x" in sub_type[i]:
+                vars[i] = x
+            if "y" in sub_type[i]:
+                vars[i] = y
+            if "u" in sub_type[i]:
+                vars[i] = u
+            if "v" in sub_type[i]:
+                vars[i] = v
+
+        # Making the main plot
+        plt.plot(vars[0], vars[1],'-*',linewidth=2)
+
+        # Adding the walls if it is desired
+        if LB != []:
+            plt.plot(plt.xlim(),[LB,LB],'k',linewidth=3)
+        if UB != []:
+            plt.plot(plt.xlim(),[UB,UB],'k',linewidth=3)
+
+        # Setting the boundaries
+        if LB != [] and UB != []:
+            plt.ylim([LB,UB])
+
+    elif plot_type.lower() == "field":
+        M = np.hypot(u, v)
+        ax.quiver(x,y,u,v,M,linewidth=0.1,edgecolor=(0,0,0),cmap="jet")
+
+
+    # elif plot_type.lower() == "surface":
+    #     Axes3D.
+
+
 # =============================================================================
 #                             Setting Up Problem
 # =============================================================================
 
 # Setting constants
 N_x = 0    # Number of nodes in the x direction
-N_y = 20    # Number of nodes in the y direction
-N_t = 2e2
-dt = 0.1
+N_y = 30    # Number of nodes in the y direction
+N_t = 4e2
+dt = 0.01
 t = 0
 T  = N_t * dt
 u_B = [0.02, -0.01]     # [m/s] Wall Velocity.
+# u_B = [0.0, 0]     # [m/s] Wall Velocity.
 L_x = 0.005  # [m]
 L_y = 0.01  # [m]
 check_dt = True
 
-# FLuid Properties
+# Fluid Properties
 u_max = 0.03    # m/s
 y_min = 0.005   # m
 rho   = 1e3   # kg/m^3
 nu    = 1e-6  # m^2/s
 dP    = -u_max * 2 * rho * nu / y_min**2 # [Pa/m]
-
 
 # Analytic Solution
 u_fun = lambda y: (-u_max/y_min**2)*y**2 + u_max
@@ -99,8 +151,10 @@ if N_x == 0:
             h = L_y/N_y
         print("N_y was changed ", N_y0, " -> ", N_y)
     N_x = L_x//h
+
 x_vals = np.arange(0+h/2,L_x,h)
 y_vals = np.arange(0+h/2,L_y,h)
+
 # NOTE: This code is going ot be set up to basically always carry 'ghost' cells from boundaries.
     #   This implies the matrices will have an extra dimension compared to the
     #   dimensions of the domain. ie (0,0) corresponds to a point outside the domain
@@ -114,35 +168,40 @@ N_y = int(N_y)
 # Setting all of the initial Values to 0
 u = np.zeros((N_x + 2, N_y + 2))
 u[1:-1,1:-1] = u_init
-# plt.plot(y_vals, u[:,1:-1].T)
+v = np.zeros((N_x + 2, N_y + 2))
 
 # %% Applying the boundary conditions
 u = set_ghost(u, u_B)
 
 # Creating lists to store all of the variables
 u_list = [u]
+v_list = [v]
 t_list = [t]
+
 
 # plt.plot(y_vals, u_list[-1][1:-1,1:-1].T)
 # plt.show()
 # exit()
-plt.figure()
+fig,ax = plt.subplots()
 while t < T: # and not user_done:
-    # Plotting the velocity profile
-    plt.cla()
-    plt.plot(u_list[-1][1,1:-1].T, y_vals,'-*',linewidth=2)
-    plt.plot([0,u_max],[0,0],'k',linewidth=3)
-    plt.plot([0,u_max],[L_y,L_y],'k',linewidth=3)
-    # plt.plot(x_vals, u_list[-1][1:-1,1:-1])
+    make_plot(ax,x_vals, y_vals,
+              u_list[-1][1:-1,1:-1].T,
+              v_list[-1][1:-1,1:-1].T,
+              LB=0,
+              UB=L_y,
+              plot_type="field",
+              sub_type=["u","y"]
+              )
+
+    # Axis labels and title
     plt.title(str(round(t,4)))
     plt.xlabel("velocity")
     plt.ylabel("y")
-    # plt.xlim([0,u_max + 0.1 * u_max])
-    plt.ylim([0,L_y])
     plt.pause(0.001)
+
     # if t == 0:
     #     plt.show()
-
+    # exit()
 
     # Checking time step if desired
     if check_dt:
@@ -194,11 +253,21 @@ while t < T: # and not user_done:
     # Setting boundary Conditions and updating time
     u_new = set_ghost(u_new, u_B)
     u = u_new
-    t = t + dt
+    t += dt
 
     # Appending values to the lists for storage
     u_list.append(u_new)
     t_list.append(t)
+
+    # key = getkey(blocking=True)
+    # # print(key)
+    # if "a" in key:
+    #     # t = T
+    #     print("break Loop")
+    #     # break
+
+
+
 
 # plt.show()
 
