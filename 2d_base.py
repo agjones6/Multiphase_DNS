@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 # =============================================================================
 #                                 Functions
 # =============================================================================
-def set_ghost(u, u_B):
+def set_ghost(map, u, u_B):
     bound_type = 1
     try:
         if len(u_B) == 2:
@@ -39,6 +39,64 @@ def set_ghost(u, u_B):
         num_i = num_i - 1
         num_j = num_j - 1
 
+    def find_fluid(map,loc):
+        x = loc[0]
+        y = loc[1]
+
+        x_max,y_max = map.shape
+        x_min,y_min = 0,0
+
+        x_max = x_max - 1
+        y_max = y_max - 1
+
+        top_i = (x,y+1)
+        bot_i = (x,y-1)
+        right_i = (x+1,y)
+        left_i = (x-1,y)
+        if y < y_max:
+            top = map[top_i]
+        else:
+            top = ""
+
+        if y > y_min:
+            bottom = map[bot_i]
+        else:
+            bottom = ""
+
+        if x < x_max:
+            right = map[right_i]
+        else:
+            right = ""
+
+        if x > x_min:
+            left = map[left_i]
+        else:
+            left = ""
+
+        bound_array = np.array([top,bottom,left,right])
+        index_array = np.array([top_i, bot_i, right_i, left_i])
+        try:
+            final_index = index_array[bound_array=="f"][0]
+            final_index = (final_index[0],final_index[1])
+        except:
+            final_index = (x,y)
+
+        return final_index
+        print(final_index)
+
+    for i in range(len(map[:,0])):
+        for j in range(len(map[0,:])):
+            if map[i,j] == "w":
+                f_ind = find_fluid(map,[i,j])
+                print(f_ind)
+                # if bound_type == 1:
+                #     u[i,j] = 2*u_B - u[i,j+1]
+                # elif bound_type == 2:
+                #     u[i,0] = 2*u_B[0] - u[i,1]
+                #     u[i,num_j] = 2*u_B[1] - u[i,num_j-1]
+
+
+    exit()
     # Doing the wall ghost cells (all i except i == 0 and i == num_i)
     for i in range(1,num_i):
         if bound_type == 1:
@@ -104,6 +162,51 @@ def make_plot(mp, x, y, u, v, **kwargs):
 
     # elif plot_type.lower() == "surface":
     #     Axes3D.
+def show_domain(map):
+    # Changing the values to integers
+    map[map=="f"] = 0
+    map[map=="w"] = 1
+    map[map=="p"] = 2
+
+    try:
+        map = np.double(map)
+    except:
+        print("couldn't convert to integers")
+        return
+    # Ploting the image
+    plt.imshow(map,origin="bottom")
+
+def set_boundary(N_space,**kwargs):
+
+    left = kwargs.get("left","periodic")
+    right = kwargs.get("right","periodic")
+    top = kwargs.get("top","wall")
+    bottom = kwargs.get("bottom","wall")
+
+    def my_str(arg):
+        if "periodic" in arg:
+            return "p"
+        elif "wall" in arg:
+            return "w"
+        else:
+            return "f"
+
+    # Creating empty array
+    N_space = np.array(N_space) + 2
+    # blk_array = np.chararray(N_space)
+    blk_array = np.empty(N_space,dtype="object")
+    blk_array[:] = "f"
+
+    # Going through the edges of the array to assign boundary conditions
+    map = blk_array
+
+    map[0,:] = my_str(left)
+    map[-1,:] = my_str(right)
+    map[:,0] = my_str(top)
+    map[:,-1] = my_str(bottom)
+
+    return map
+
 
 # =============================================================================
 #                             Analytic Solution
@@ -130,7 +233,7 @@ u_analytic_mean = np.mean(u_vals)
 # Spacial Domain
 N_x = 0    # Number of nodes in the x direction
 N_y = 30    # Number of nodes in the y direction
-L_x = 0.001  # [m]
+L_x = 0.002  # [m]
 L_y = 0.01  # [m]
 
 # Time Domain Variables
@@ -199,9 +302,16 @@ v = np.zeros((N_x + 2, N_y + 2))
 # v[1:-1,N_y//2:-1] = -v_init
 v[1:-1,1:-1] = v_init
 
+# Defining the wall boundary
+domain_map = set_boundary([N_x,N_y])
+# domain_map[4,0:5] = "w"
+# show_domain(domain_map.T)
+# plt.show()
+
 # %% Applying the boundary conditions
-u = set_ghost(u, u_B)
+u = set_ghost(domain_map, u, u_B)
 v = set_ghost(v, v_B)
+exit()
 
 # Creating lists to store all of the variables
 u_list = [u]
