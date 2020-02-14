@@ -21,99 +21,6 @@ import matplotlib.pyplot as plt
 # =============================================================================
 #                                 Functions
 # =============================================================================
-def set_ghost(map, u, u_B):
-    bound_type = 1
-    try:
-        if len(u_B) == 2:
-            bound_type = 2
-        elif len(u_B) == 1:
-            u_B = u_B[0]
-            bound_type = 1
-    except:
-        bound_type = 1
-        pass
-
-    # Checking to make sure the velocity array passed in is 2D
-    if len(u.shape) == 2:
-        num_i, num_j = u.shape
-        num_i = num_i - 1
-        num_j = num_j - 1
-
-    def find_fluid(map,loc):
-        x = loc[0]
-        y = loc[1]
-
-        x_max,y_max = map.shape
-        x_min,y_min = 0,0
-
-        x_max = x_max - 1
-        y_max = y_max - 1
-
-        top_i = (x,y+1)
-        bot_i = (x,y-1)
-        right_i = (x+1,y)
-        left_i = (x-1,y)
-        if y < y_max:
-            top = map[top_i]
-        else:
-            top = ""
-
-        if y > y_min:
-            bottom = map[bot_i]
-        else:
-            bottom = ""
-
-        if x < x_max:
-            right = map[right_i]
-        else:
-            right = ""
-
-        if x > x_min:
-            left = map[left_i]
-        else:
-            left = ""
-
-        bound_array = np.array([top,bottom,left,right])
-        index_array = np.array([top_i, bot_i, right_i, left_i])
-        try:
-            final_index = index_array[bound_array=="f"][0]
-            final_index = (final_index[0],final_index[1])
-        except:
-            final_index = (x,y)
-
-        return final_index
-        print(final_index)
-
-    for i in range(len(map[:,0])):
-        for j in range(len(map[0,:])):
-            if map[i,j] == "w":
-                f_ind = find_fluid(map,[i,j])
-                print(f_ind)
-                # if bound_type == 1:
-                #     u[i,j] = 2*u_B - u[i,j+1]
-                # elif bound_type == 2:
-                #     u[i,0] = 2*u_B[0] - u[i,1]
-                #     u[i,num_j] = 2*u_B[1] - u[i,num_j-1]
-
-
-    exit()
-    # Doing the wall ghost cells (all i except i == 0 and i == num_i)
-    for i in range(1,num_i):
-        if bound_type == 1:
-            u[i,0] = 2*u_B - u[i,1]
-            u[i,num_j] = 2*u_B - u[i,num_j-1]
-        elif bound_type == 2:
-            u[i,0] = 2*u_B[0] - u[i,1]
-            u[i,num_j] = 2*u_B[1] - u[i,num_j-1]
-
-
-    # Handling the periodic boundary conditions
-    for j in range(1,num_j):
-        u[0,j] = u[num_i - 1,j]
-        u[num_i,j] = u[1,j]
-
-    return u
-
 def make_plot(mp, x, y, u, v, **kwargs):
     # Handling optional arguments
     LB = kwargs.get("LB",[])
@@ -165,7 +72,7 @@ def make_plot(mp, x, y, u, v, **kwargs):
 def show_domain(map):
     # Changing the values to integers
     map[map=="f"] = 0
-    map[map=="w"] = 1
+    map[map == "w"] = 1
     map[map=="p"] = 2
 
     try:
@@ -207,6 +114,116 @@ def set_boundary(N_space,**kwargs):
 
     return map
 
+def set_ghost(map, u, u_B):
+    bound_type = 1
+    try:
+        if len(u_B) == 2:
+            bound_type = 2
+    except:
+        bound_type = 1
+        pass
+
+    # Checking to make sure the velocity array passed in is 2D
+    if len(u.shape) == 2:
+        num_i, num_j = u.shape
+        num_i = num_i - 1
+        num_j = num_j - 1
+
+    def find_fluid(map,loc,**kwargs):
+        adj = kwargs.get("adj",0)
+
+        x = loc[0]
+        y = loc[1]
+
+        x_max,y_max = map.shape
+        x_min,y_min = 0,0
+
+        x_max = x_max - 1
+        y_max = y_max - 1
+
+        top_i = (x,y+1)
+        bot_i = (x,y-1)
+        right_i = (x+1,y)
+        left_i = (x-1,y)
+        if y < y_max:
+            top = map[top_i]
+        else:
+            top = ""
+
+        if y > y_min:
+            bottom = map[bot_i]
+        else:
+            bottom = ""
+
+        if x > x_min:
+            left = map[left_i]
+        else:
+            left = ""
+
+        if x < x_max:
+            right = map[right_i]
+        else:
+            right = ""
+
+
+        bound_array = np.array([top,bottom,left,right])
+        index_array = np.array([top_i, bot_i, left_i, right_i])
+        try:
+            final_index = index_array[bound_array=="f"][0]
+            final_index = (final_index[0]+(final_index[0]-x)*adj,final_index[1]+(final_index[1]-y)*adj)
+        except:
+            final_index = (x,y)
+
+        return final_index
+
+    for i in range(len(map[:,0])):
+        for j in range(len(map[0,:])):
+            # Getting the current cell type
+            cm = map[i,j]
+
+            # Setting the wall ghost cells
+            if "w" in cm:
+                f_ind = find_fluid(map,[i,j])
+
+                # Using the fluid index to set the ghost cell value
+                if (i,j) == f_ind:
+                    # This is for the unused corners of the domain
+                    u[i,j] = 0
+                else:
+                    # Checking to see if there are different walls
+                    if len(cm.split("_")) > 1:
+                        w_type = cm.split("_")[1]
+                        w_type = int(w_type)
+                        if len(u_B) != 0:
+                            u[i,j] = 2*u_B[w_type] - u[f_ind]
+                        else:
+                            u[i,j] = 2*u_B - u[f_ind]
+                    else:
+                        if len(u_B) != 0:
+                            u[i,j] = 2*u_B[0] - u[f_ind]
+                        else:
+                            u[i,j] = 2*u_B - u[f_ind]
+
+            # Setting periodic Boundaries
+            elif "p" in cm:
+
+                f_ind = find_fluid(map,[i,j],adj=-2)
+                x_i,y_i = f_ind
+                if x_i > num_i:
+                    x_i = x_i-num_i
+                if y_i > num_j:
+                    y_i = y_i-num_j
+                    # print(f_ind[0]-num_i)
+                if x_i < 0:
+                    x_i = x_i + num_i
+                if y_i < 0:
+                    y_i = y_i + num_j
+
+                u[i,j] = u[x_i,y_i]
+                # u[0,j] = u[num_i - 1,j]
+                # u[num_i,j] = u[1,j]
+
+    return u
 
 # =============================================================================
 #                             Analytic Solution
@@ -231,36 +248,40 @@ u_analytic_mean = np.mean(u_vals)
 #                             Setting Up Problem
 # =============================================================================
 # Spacial Domain
-N_x = 0    # Number of nodes in the x direction
-N_y = 30    # Number of nodes in the y direction
-L_x = 0.002  # [m]
+N_x = 60    # Number of nodes in the x direction
+N_y = 0    # Number of nodes in the y direction
+L_x = 0.02  # [m]
 L_y = 0.01  # [m]
 
 # Time Domain Variables
-dt = 1e-1
-N_t = 2e2
+dt = 1e-3
+N_t = 6e2
 t = 0
 T  = N_t * dt
 
 # Wall Velocities
 # u_B = [-0.02, 0.03]     # [m/s] Wall Velocity.
-u_B = 0
-v_B = 0     # [m/s] Wall Velocity.
+u_B = [0.0]
+v_B = [0]     # [m/s] Wall Velocity.
 # u_B = [0.0, 0]     # [m/s] Wall Velocity.
 
 # Pressure Gradient
-dP_x = dP_analytic*100
-dP_y = 0 #-1
+dP_x = dP_analytic
+# dP_x = 0
+dP_y = -1
 
 # Initial Velocities
 u_init = u_analytic_mean
 # u_init = 0
-# v_init = 0.02
-v_init = -0.01
+v_init = 0.0
+# v_init = -u_init
+
+# External Forces
+
 
 # Options for Stability
 check_dt = True
-lower_tolerance = 1e-20
+lower_tolerance = 1e-10
 
 # %% ==========================================================================
 #                         Setting Initial Conditions
@@ -303,15 +324,20 @@ v = np.zeros((N_x + 2, N_y + 2))
 v[1:-1,1:-1] = v_init
 
 # Defining the wall boundary
-domain_map = set_boundary([N_x,N_y])
-# domain_map[4,0:5] = "w"
-# show_domain(domain_map.T)
-# plt.show()
+domain_map = set_boundary([N_x,N_y],
+                          top   ="wall",
+                          bottom="wall",
+                          left  ="periodic",
+                          right ="periodic")
+domain_map[-20:-15,0:12] = "w"
 
 # %% Applying the boundary conditions
+# domain_map[domain_map=="w"] = "w_0"
+# show_domain(domain_map.T)
+# plt.show()
+# exit()
 u = set_ghost(domain_map, u, u_B)
-v = set_ghost(v, v_B)
-exit()
+v = set_ghost(domain_map, v, v_B)
 
 # Creating lists to store all of the variables
 u_list = [u]
@@ -330,7 +356,7 @@ while t < T: # and not user_done:
               LB=0,
               UB=L_y,
               plot_type="field",
-              sub_type=["u","y"]
+              sub_type=["u","x"]
               )
     # Axis labels and title
     my_plot1.set_title(str(round(t,4)))
@@ -370,7 +396,7 @@ while t < T: # and not user_done:
 
     # Showing the initial Conditions
     if t == 0:
-        plt.pause(2)
+        plt.pause(3)
     # exit()
 
     # --> Checking time step if desired
@@ -405,7 +431,7 @@ while t < T: # and not user_done:
                                    - (u[i,j] + u[i,j-1]) * (1/4)*((v[i,j]+v[i,j-1]+v[i+1,j]+v[i+1,j-1]) + (v[i,j]+v[i,j-1]+v[i-1,j]+v[i-1,j-1])) )
 
             A_y[i,j] = (1/(4*h)) * ( (v[i,j+1] + v[i,j])**2 - (v[i,j-1] + v[i,j])**2
-                                  + (v[i+1,j] + v[i,j]) * (1/4)*((u[i,j]+u[i,j+1]+u[i+1,j]+u[i+1,j+1]) + (u[i,j]+u[i,j+1]+u[i-1,j]+u[i-1,j+1]))
+                                  + (v[i+1,j] + v[i,j]) * (1/4)*((u[i,j]+u[i,j+1 ]+u[i+1,j]+u[i+1,j+1]) + (u[i,j]+u[i,j+1]+u[i-1,j]+u[i-1,j+1]))
                                   - (v[i,j] + v[i-1,j]) * (1/4)*((u[i,j]+u[i,j-1]+u[i+1,j]+u[i+1,j-1]) + (u[i,j]+u[i,j-1]+u[i-1,j]+u[i-1,j-1])) )
 
             # Diffusion Term
@@ -417,8 +443,8 @@ while t < T: # and not user_done:
     v_star = v + dt * ( -A_y + nu * D_y )
 
     # Doing the boundaries on the star velocities
-    u_star = set_ghost(u_star,u_B)
-    v_star = set_ghost(v_star,v_B)
+    u_star = set_ghost(domain_map,u_star,u_B)
+    v_star = set_ghost(domain_map,v_star,v_B)
 
     u_ishift = np.zeros(u.shape)
     v_ishift = np.zeros(v.shape)
@@ -435,8 +461,8 @@ while t < T: # and not user_done:
     u_ishift = u_ishift_star - (dt/(rho*h)) * dP_x * h
     v_ishift = v_ishift_star - (dt/(rho*h)) * dP_y * h
 
-    u_ishift = set_ghost(u_ishift,u_B)
-    v_ishift = set_ghost(v_ishift,v_B)
+    u_ishift = set_ghost(domain_map,u_ishift,u_B)
+    v_ishift = set_ghost(domain_map,v_ishift,v_B)
 
     # Getting the unshifted values back out
     u_new = np.zeros(u.shape)
@@ -444,11 +470,11 @@ while t < T: # and not user_done:
     for i in range(1, 1 + N_x):
         for j in range(1, 1 + N_y):
             u_new[i,j] = (1/2) * (u_ishift[i,j] + u_ishift[i - 1,j])
-            v_new[i,j] = (1/2) * (v_ishift[i,j] + v_ishift[i - 1,j])
+            v_new[i,j] = (1/2) * (v_ishift[i,j] + v_ishift[i,j - 1])
 
     # Setting boundary Conditions and updating time
-    u_new = set_ghost(u_new, u_B)
-    v_new = set_ghost(v_new, v_B)
+    u_new = set_ghost(domain_map,u_new, u_B)
+    v_new = set_ghost(domain_map,v_new, v_B)
     u = u_new
     v = v_new
     t += dt
@@ -496,4 +522,5 @@ while t < T: # and not user_done:
 #     # plt.ylim([0,L_y])
 #
 #     plt.title("t = " + str(round(t_list[c_index],4)))
+print("Simulation Completed")
 plt.show()
