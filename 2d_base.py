@@ -267,11 +267,11 @@ v_B = [0]     # [m/s] Wall Velocity.
 
 # Pressure Gradient
 dP_x = dP_analytic
-# dP_x = 0
-dP_y = -1
+dP_x = 0
+dP_y = 0
 
 # Initial Velocities
-u_init = u_analytic_mean
+u_init = u_analytic_mean*3
 # u_init = 0
 v_init = 0.0
 # v_init = -u_init
@@ -328,14 +328,19 @@ domain_map = set_boundary([N_x,N_y],
                           top   ="wall",
                           bottom="wall",
                           left  ="periodic",
-                          right ="periodic")
-domain_map[-20:-15,0:12] = "w"
+                          right ="wall")
+domain_map[-20:-15,12:18] = "w"
+domain_map[-16:-13,6:12] = "w"
 
+# Showing a picture of the domain
+show_my_domain = False
+if show_my_domain:
+    show_domain(domain_map.T)
+    plt.show()
+    exit()
 # %% Applying the boundary conditions
 # domain_map[domain_map=="w"] = "w_0"
-# show_domain(domain_map.T)
-# plt.show()
-# exit()
+
 u = set_ghost(domain_map, u, u_B)
 v = set_ghost(domain_map, v, v_B)
 
