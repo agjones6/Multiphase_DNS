@@ -328,7 +328,7 @@ domain_map = set_boundary([N_x,N_y],
                           top   ="wall",
                           bottom="wall",
                           left  ="periodic",
-                          right ="wall")
+                          right ="periodic")
 domain_map[-20:-15,12:18] = "w"
 domain_map[-16:-13,6:12] = "w"
 
@@ -337,7 +337,7 @@ show_my_domain = False
 if show_my_domain:
     show_domain(domain_map.T)
     plt.show()
-    exit()
+    # exit()
 # %% Applying the boundary conditions
 # domain_map[domain_map=="w"] = "w_0"
 
