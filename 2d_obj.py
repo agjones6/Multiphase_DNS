@@ -508,7 +508,7 @@ u_analytic_mean = np.mean(u_vals)
 # =============================================================================
 pressure_solve = "gradient" # "constant_gradient"
 output_file = "./Output/MB_21.h5"
-show_progress = True
+show_progress = False
 write_interval = 0.005
 dt_multiplier = 0.5
 

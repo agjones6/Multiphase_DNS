@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import matplotlib.animation as animation
+from mpl_toolkits.mplot3d import Axes3D
 
 
 def make_plot(mp, x, y, u, v, **kwargs):
@@ -62,11 +63,16 @@ def make_plot(mp, x, y, u, v, **kwargs):
 
     elif plot_type.lower() == "field":
         M = np.hypot(u, v)
-        mp.quiver(x,y,u,v,M,linewidth=0.1,edgecolor=(0,0,0),cmap="jet")
+        mp.quiver(x,y,u,v,M,linewidth=0.1,edgecolor=(0,0,0),cmap="jet")#,scale_units="xy")
+
+    elif plot_type.lower() == "surf":
+        x,y = np.meshgrid(x,y)
+        mag = (u**2 + v**2)**0.5
+        mp.plot_surface(x,y,mag,cmap="jet")
 
 # Defining the hdf5 file
-mb_num = 20
-skip_num = 2
+mb_num = 21
+skip_num = 1
 my_dpi = 400
 my_fps = 25
 my_file    = "./Output/MB_" + str(mb_num) + ".h5"
@@ -93,8 +99,8 @@ y = np.array(hf["y"])
 # writer = Writer(fps=20, metadata=dict(artist='Me'), bitrate=1800)
 
 fig = plt.figure()
-my_plot1 = fig.add_subplot(2,1,1)
-my_plot4 = fig.add_subplot(2,1,2)
+my_plot1 = fig.add_subplot(2,1,1,projection='3d')
+my_plot4 = fig.add_subplot(2,1,2,projection='3d')
 # my_plot2 = fig.add_subplot(2,2,3)
 # my_plot3 = fig.add_subplot(2,2,4)
 def animate(i):
@@ -102,8 +108,14 @@ def animate(i):
     if i >= len(t)-1:
         i = len(t)-1
     my_plot1.clear()
-    M = np.hypot(u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T)
-    my_plot1.quiver(x, y, u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T, M, linewidth=0.1,edgecolor=(0,0,0),cmap="jet")
+    make_plot(my_plot1, x, y,
+              u[i,1:-1,1:-1].T,
+              v[i,1:-1,1:-1].T,
+              plot_type="surf",
+              sub_type=[]
+              )
+    # M = np.hypot(u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T)
+    # my_plot1.quiver(x, y, u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T, M, linewidth=0.1, edgecolor=(0,0,0),cmap="jet")
     my_plot1.set_title(str(round(t[i],6)))
 
     # --> PRESSURE GRADIENT FIELD
@@ -111,7 +123,7 @@ def animate(i):
     make_plot(my_plot4, x, y,
               dP_x[i,1:-1,1:-1].T,
               dP_y[i,1:-1,1:-1].T,
-              plot_type="field",
+              plot_type="surf",
               sub_type=[]
               )
 
@@ -134,6 +146,6 @@ def animate(i):
 
 ani = FuncAnimation(fig,animate,frames=(len(t)//skip_num))
 
-# plt.show()
-ani.save(video_name,writer="ffmpeg", dpi=my_dpi, fps=my_fps)#,writer='matplotlib.animation.PillowWriter')#,writer=writer,dpi=100)
+plt.show()
+# ani.save(video_name,writer="ffmpeg", dpi=my_dpi, fps=my_fps)#,writer='matplotlib.animation.PillowWriter')#,writer=writer,dpi=100)
 exit()
