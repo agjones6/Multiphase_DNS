@@ -1,4 +1,4 @@
-#!/usr/bin/python -u
+#   !     /usr/bin/python -u This has the potential to change the python environment
 
 #
 # ANDY JONES
@@ -10,7 +10,7 @@
 # Importing pachages
 import time
 import numpy as np
-import pandas as pd
+# import pandas as pd
 import matplotlib.pyplot as plt
 import h5py
 
@@ -82,13 +82,14 @@ def show_domain(map):
     # Changing the values to integers
     map[map=="f"] = 0
     map[map=="p"] = 1
+    map[map=="o"] = 2
 
     # Getting the wall number
-    map[map == "w"] = 2
-    map[map == "w_0"] = 3
-    map[map == "w_1"] = 4
-    map[map == "w_2"] = 5
-    map[map == "w_3"] = 6
+    map[map == "w"] = 3
+    map[map == "w_0"] = 4
+    map[map == "w_1"] = 5
+    map[map == "w_2"] = 6
+    map[map == "w_3"] = 7
 
     try:
         map = np.double(map)
@@ -110,6 +111,8 @@ def set_boundary(N_space,**kwargs):
             return "p"
         elif "wall" in arg:
             return "w"
+        elif "outflow" in arg:
+            return "o"
         else:
             return "f"
 
@@ -228,7 +231,6 @@ def set_ghost(map, u, u_B=0, **kwargs):
 
             # Setting periodic Boundaries
             elif "p" in cm:
-
                 f_ind = find_fluid(map,[i,j],adj=-2)
                 x_i,y_i = f_ind
                 if x_i > num_i:
@@ -242,8 +244,13 @@ def set_ghost(map, u, u_B=0, **kwargs):
                     y_i = y_i + num_j
 
                 u[i,j] = u[x_i,y_i]
-                # u[0,j] = u[num_i - 1,j]
-                # u[num_i,j] = u[1,j]
+
+            # Setting Outflow Boundaries
+            elif "o" in cm:
+                # The Property on the boundary is equal to the fluid near the boundary
+                f_ind = find_fluid(map,[i,j])
+                x_i,y_i = f_ind
+                u[i,j] = u[x_i,y_i]
 
     return u
 
@@ -500,8 +507,8 @@ u_analytic_mean = np.mean(u_vals)
 #                             Setting Up Problem
 # =============================================================================
 pressure_solve = "gradient" # "constant_gradient"
-output_file = "./Output/MB_20.h5"
-show_progress = False
+output_file = "./Output/MB_21.h5"
+show_progress = True
 write_interval = 0.005
 dt_multiplier = 0.5
 
@@ -509,7 +516,7 @@ real_start_time = time.time()
 elapsed_time = lambda st_t: time.time() - st_t
 
 # Initializing the domain class
-dc = domain_class(N_x=300,
+dc = domain_class(N_x=50,
                   N_y=0,
                   L_x=0.2,
                   L_y=0.1,
@@ -532,9 +539,10 @@ dc.v_init = 0 #u_analytic_mean
 dc.T = 6
 dc.N_t = dc.T/dc.dt
 
-# dc.left = "wall"
-# dc.right = "wall"
-# dc.set_bounds()
+dc.left  = "outflow"
+dc.right = "outflow"
+dc.top   = "outflow"
+dc.set_bounds()
 
 # Putting a blockage in the flow
 width = 0.01
@@ -556,10 +564,10 @@ dc.domain_map[st_x2:en_x2,st_y2:en_y2] = "w"
 
 # Changing the wall numbers
 dc.domain_map[dc.domain_map == "w"] = "w_0"
-dc.domain_map[:,-1] = "w_1"
+# dc.domain_map[:,-1] = "w_1"
 
 # wall velocities
-dc.u_B = [4.69, 0]
+dc.u_B = [4.69, 0] # 4.69 is the target for
 dc.v_B = [0,0]
 
 # Initializing the flow class
@@ -573,6 +581,7 @@ dP_y = fc.dP_y
 # Showing a picture of the domain
 show_my_domain = False
 if show_my_domain:
+    print(dc.domain_map.T)
     plt.figure()
     show_domain(dc.domain_map.T)
     plt.show()
