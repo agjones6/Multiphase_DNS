@@ -91,6 +91,10 @@ def show_domain(map):
     map[map == "w_2"] = 6
     map[map == "w_3"] = 7
 
+    # SOurce
+    map[map == "s"] = 8
+
+
     try:
         map = np.double(map)
     except:
@@ -113,6 +117,8 @@ def set_boundary(N_space,**kwargs):
             return "w"
         elif "outflow" in arg:
             return "o"
+        elif "source" in arg:
+            return "s"
         else:
             return "f"
 
@@ -127,14 +133,15 @@ def set_boundary(N_space,**kwargs):
 
     map[0,:] = my_str(left)
     map[-1,:] = my_str(right)
-    map[:,0] = my_str(top)
-    map[:,-1] = my_str(bottom)
+    map[:,-1] = my_str(top)
+    map[:,0] = my_str(bottom)
 
     return map
 
 def set_ghost(map, u, u_B=0, **kwargs):
 
     type = kwargs.get("type","velocity")
+    source = kwargs.get("source",0)
 
     bound_type = 1
     try:
@@ -250,8 +257,24 @@ def set_ghost(map, u, u_B=0, **kwargs):
                 # The Property on the boundary is equal to the fluid near the boundary
                 f_ind = find_fluid(map,[i,j])
                 x_i,y_i = f_ind
+                # print(cm, (i,j), "-->", f_ind)
                 u[i,j] = u[x_i,y_i]
 
+            # Setting the source term ghost cells
+            elif "s" in cm:
+                # Checking to see if there are more than one source terms
+                if len(cm.split("_")) > 1:
+                    s_type = cm.split("_")[1]
+                    s_type = int(s_type)
+                    if len(source) != 0:
+                        u[i,j] = source[s_type]
+                    else:
+                        u[i,j] = source
+                else:
+                    if len(u_B) != 0:
+                        u[i,j] = source[0]
+                    else:
+                        u[i,j] = source
     return u
 
 class domain_class:
@@ -323,9 +346,12 @@ class domain_class:
                 self.L_y = self.h * self.N_y
 
         # Getting a mesh of x and y values
-        self.x_grid = np.arange(0+self.h/2,self.L_x,self.h)
-        self.y_grid = np.arange(0+self.h/2,self.L_y,self.h)
+        # self.x_grid = np.arange(0-self.h/2,self.L_x+self.h/2,self.h)
+        # self.y_grid = np.arange(0-self.h/2,self.L_y+self.h/2,self.h)
+        self.x_grid = np.linspace(0-self.h/2,self.L_x+self.h/2,int(self.N_x + 2))
+        self.y_grid = np.linspace(0-self.h/2,self.L_y+self.h/2,int(self.N_y + 2))
 
+        print(len(self.x_grid),len(self.y_grid))
         # Converting the Number of Nodes to integers
         self.N_x = int(self.N_x)
         self.N_y = int(self.N_y)
@@ -360,8 +386,8 @@ class flow_class:
         self.v = np.zeros((dc.N_x + 2, dc.N_y + 2)) + dc.v_init
 
         # Setting the boundaries on the initial velocity array
-        self.u = set_ghost(dc.domain_map, self.u, dc.u_B)
-        self.v = set_ghost(dc.domain_map, self.v, dc.v_B)
+        self.u = set_ghost(dc.domain_map, self.u, dc.u_B,source=dc.u_S)
+        self.v = set_ghost(dc.domain_map, self.v, dc.v_B,source=dc.v_S)
 
         # Setting the time variable
         self.t = dc.t
@@ -371,8 +397,8 @@ class flow_class:
         self.dP_y = np.zeros((dc.N_x + 2, dc.N_y + 2)) + dc.dP_y
 
         # Setting the boundaries on the initial Pressure Array
-        self.u = set_ghost(dc.domain_map, self.u, dc.u_B,type="pressure")
-        self.v = set_ghost(dc.domain_map, self.v, dc.v_B,type="pressure")
+        self.dP_x = set_ghost(dc.domain_map, self.dP_x, dc.u_B, type="pressure",source=dc.dP_x_S)
+        self.dP_y = set_ghost(dc.domain_map, self.dP_y, dc.v_B, type="pressure",source=dc.dP_y_S)
 
 def bound_list(map,loc,**kwargs):
     # Returns a list of the fluids on surrounding a given index in a given domain
@@ -443,7 +469,7 @@ def calc_pressure(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
     x_len -= 1
     y_len -= 1
 
-    tol = 1e-5
+    tol = 1e-4
 
     dP_x_new = np.zeros(dP_x.shape)
     dP_y_new = np.zeros(dP_y.shape)
@@ -507,10 +533,13 @@ u_analytic_mean = np.mean(u_vals)
 #                             Setting Up Problem
 # =============================================================================
 pressure_solve = "gradient" # "constant_gradient"
-output_file = "./Output/MB_21.h5"
-show_progress = False
+output_file = "./Output/MB_22.h5"
+show_progress = True
 write_interval = 0.005
 dt_multiplier = 0.5
+
+dt_max = 0.1
+dt_min = 1e-10
 
 real_start_time = time.time()
 elapsed_time = lambda st_t: time.time() - st_t
@@ -518,8 +547,8 @@ elapsed_time = lambda st_t: time.time() - st_t
 # Initializing the domain class
 dc = domain_class(N_x=50,
                   N_y=0,
-                  L_x=0.2,
-                  L_y=0.1,
+                  L_x=0.02,
+                  L_y=0.03,
                   dt = 5e-6
                   # dP_x=dP_analytic THis is not used
                   )
@@ -532,30 +561,31 @@ dc.dP_x = 0 #dP_analytic
 dc.dP_y = 0
 
 # Initial Velocities
-dc.u_init = 0.0 #u_analytic_mean
+dc.u_init = 0 #u_analytic_mean
 dc.v_init = 0 #u_analytic_mean
 
 # Setting the time
-dc.T = 6
+dc.T = 10
 dc.N_t = dc.T/dc.dt
 
+dc.top   = "wall"
+dc.bottom = "wall"
 dc.left  = "outflow"
-dc.right = "outflow"
-dc.top   = "outflow"
+dc.right = "source"
 dc.set_bounds()
 
 # Putting a blockage in the flow
-width = 0.01
-st_x    = int(dc.N_x//1.7 - (width//dc.h)*0.5)
+width = 0.001
+st_x    = int(dc.N_x//1.2 - (width//dc.h)*0.5)
 en_x = int(st_x+width//dc.h)
-height = 0.04
+height = 0.004
 st_y    = 0 #int(dc.N_y//2 - (height//dc.h)*0.5)
 en_y = int(st_y+height//dc.h)
 
-width2 = 0.015
-st_x2 = int(dc.N_x//1.7 - ((width+width2)//dc.h)*0.5)
+width2 = 0.0015
+st_x2 = int(dc.N_x//1.2 - ((width+width2)//dc.h)*0.5)
 en_x2 = int(st_x2+(width2)//dc.h)
-height2 = 0.005
+height2 = 0.0005
 st_y2 = int(en_y)
 en_y2 = int(st_y+(height+height2)//dc.h)
 
@@ -564,11 +594,25 @@ dc.domain_map[st_x2:en_x2,st_y2:en_y2] = "w"
 
 # Changing the wall numbers
 dc.domain_map[dc.domain_map == "w"] = "w_0"
-# dc.domain_map[:,-1] = "w_1"
+dc.domain_map[:,-1] = "w_1"
+
+# Changing Soure Numbers
+dc.domain_map[dc.domain_map == "s"] = "s_0"
 
 # wall velocities
-dc.u_B = [4.69, 0] # 4.69 is the target for
-dc.v_B = [0,0]
+dc.u_B = [0.0, 0] # 4.69 is the target for
+dc.v_B = [0, 0]
+
+# Source Terms
+dc.u_S    = [-2]
+dc.v_S    = [0]
+dc.dP_x_S = [0]
+dc.dP_y_S = [0]
+
+# Getting a mesh of x and y values
+# dc.x_grid = np.arange(0-dc.h/2,dc.L_x+dc.h/2,dc.h)
+# dc.y_grid = np.arange(0-dc.h/2,dc.L_y+dc.h/2,dc.h)
+
 
 # Initializing the flow class
 fc = flow_class(dc)
@@ -581,10 +625,12 @@ dP_y = fc.dP_y
 # Showing a picture of the domain
 show_my_domain = False
 if show_my_domain:
-    print(dc.domain_map.T)
-    plt.figure()
-    show_domain(dc.domain_map.T)
-    plt.show()
+    print(dc.domain_map)
+    # print(np.flip(dc.domain_map).T)
+    # print(dc.domain_map.T)
+    # plt.figure()
+    # show_domain(dc.domain_map.T)
+    # plt.show()
     exit()
 
 # %% Applying the boundary conditions
@@ -616,8 +662,8 @@ while t < dc.T: # and not user_done:
         # --> VECTOR FIELD PLOT
         my_plot1.clear()
         make_plot(my_plot1, x_vals, y_vals,
-                  u_list[-1][1:-1,1:-1].T,
-                  v_list[-1][1:-1,1:-1].T,
+                  u_list[-1][:,:].T,
+                  v_list[-1][:,:].T,
                   LB=0,
                   UB=dc.L_y,
                   plot_type="field",
@@ -631,8 +677,8 @@ while t < dc.T: # and not user_done:
         # --> PRESSURE GRADIENT FIELD
         my_plot4.clear()
         make_plot(my_plot4, x_vals, y_vals,
-                  dP_x_list[-1][1:-1,1:-1].T,
-                  dP_y_list[-1][1:-1,1:-1].T,
+                  dP_x_list[-1][:,:].T,
+                  dP_y_list[-1][:,:].T,
                   LB=0,
                   UB=dc.L_y,
                   plot_type="field",
@@ -680,7 +726,7 @@ while t < dc.T: # and not user_done:
 
         # Showing the initial Conditions
         if t == 0:
-            plt.pause(0.0001)
+            plt.pause(1)
         # exit()
 
     # --> Checking time step if desired
@@ -695,21 +741,11 @@ while t < dc.T: # and not user_done:
         if max_vel != 0:
             dc.dt = (dc.h/max_vel) * dt_multiplier
 
-        # # checking dt
-        # eps_x = (np.mean(u[1:-1,1:-1])**3)/dc.L_x
-        # eps_y = (np.mean(v[1:-1,1:-1])**3)/dc.L_y
-        # if eps_x != 0:
-        #     Tou_x = abs((nu/eps_x))**0.5
-        #     if dc.dt/Tou_x > 1 :
-        #         dum = dc.dt
-        #         dc.dt = Tou_x*0.7
-        #         print("\n","decreasing dt  " + str(round(dum,5)) + " --> " + str(round(dc.dt,5)))
-        # if eps_y != 0:
-        #     Tou_y = abs((nu/eps_y))**0.5
-        #     if dc.dt/Tou_y > 1:
-        #         dum = dc.dt
-        #         dc.dt = Tou_y*0.7
-        #         print("\n","decreasing dt  " + str(round(dum,5)) + " --> " + str(round(dc.dt,5)))
+        if dc.dt > dt_max:
+            dc.dt = dt_max
+
+        if dc.dt < dt_min:
+            dc.dt = dt_min
 
     A_x = np.zeros(u.shape)
     A_y = np.zeros(v.shape)
@@ -737,8 +773,8 @@ while t < dc.T: # and not user_done:
     v_star = v + dc.dt * ( -A_y + nu * D_y )
 
     # Doing the boundaries on the star velocities
-    u_star = set_ghost(dc.domain_map, u_star, dc.u_B)
-    v_star = set_ghost(dc.domain_map, v_star, dc.v_B)
+    u_star = set_ghost(dc.domain_map, u_star, dc.u_B, source=dc.u_S)
+    v_star = set_ghost(dc.domain_map, v_star, dc.v_B, source=dc.v_S)
 
     u_ishift = np.zeros(u.shape)
     v_ishift = np.zeros(v.shape)
@@ -755,8 +791,8 @@ while t < dc.T: # and not user_done:
     # Calculating the new pressures if it is desired
     if pressure_solve == "gradient":
         dP_x, dP_y = calc_pressure(dc, dP_x, dP_y, u_ishift_star, v_ishift_star)
-        dP_x = set_ghost(dc.domain_map,dP_x, dc.u_B, type="pressure")
-        dP_y = set_ghost(dc.domain_map,dP_y, dc.u_B, type="pressure")
+        dP_x = set_ghost(dc.domain_map,dP_x, dc.u_B, type="pressure",source=dc.dP_x_S)
+        dP_y = set_ghost(dc.domain_map,dP_y, dc.u_B, type="pressure",source=dc.dP_y_S)
     elif pressure_solve == "constant_gradient":
         dP_x = fc.dP_x
         dP_y = fc.dP_y
@@ -766,8 +802,8 @@ while t < dc.T: # and not user_done:
     v_ishift = v_ishift_star - (dc.dt/(rho*dc.h)) * dP_y * dc.h + dc.F_y
 
     # Applying boundaries to the shifted velocities
-    u_ishift = set_ghost(dc.domain_map,u_ishift,dc.u_B)
-    v_ishift = set_ghost(dc.domain_map,v_ishift,dc.v_B)
+    u_ishift = set_ghost(dc.domain_map,u_ishift,dc.u_B,source=dc.u_S)
+    v_ishift = set_ghost(dc.domain_map,v_ishift,dc.v_B,source=dc.v_S)
 
     # Getting the unshifted values back out
     u_new = np.zeros(u.shape)
@@ -778,8 +814,8 @@ while t < dc.T: # and not user_done:
             v_new[i,j] = (1/2) * (v_ishift[i,j] + v_ishift[i,j - 1])
 
     # Setting boundary Conditions and updating time
-    u_new = set_ghost(dc.domain_map,u_new, dc.u_B)
-    v_new = set_ghost(dc.domain_map,v_new, dc.v_B)
+    u_new = set_ghost(dc.domain_map,u_new, dc.u_B,source=dc.u_S)
+    v_new = set_ghost(dc.domain_map,v_new, dc.v_B,source=dc.v_S)
     u = u_new
     v = v_new
     t += dc.dt
