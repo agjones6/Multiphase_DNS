@@ -248,8 +248,8 @@ u_analytic_mean = np.mean(u_vals)
 #                             Setting Up Problem
 # =============================================================================
 # Spacial Domain
-N_x = 60    # Number of nodes in the x direction
-N_y = 0    # Number of nodes in the y direction
+N_x = 0    # Number of nodes in the x direction
+N_y = 60    # Number of nodes in the y direction
 L_x = 0.02  # [m]
 L_y = 0.01  # [m]
 
