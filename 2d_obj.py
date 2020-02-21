@@ -1,3 +1,5 @@
+#!/usr/bin/python -u
+
 #
 # ANDY JONES
 # MAE 577
@@ -6,9 +8,11 @@
 # The goal of this is to change the 2d_base.py to be object base
 
 # Importing pachages
+import time
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import h5py
 
 # NOTE: This code is going ot be set up to basically always carry 'ghost' cells from boundaries.
     #   This implies the matrices will have an extra dimension compared to the
@@ -77,8 +81,14 @@ def make_plot(mp, x, y, u, v, **kwargs):
 def show_domain(map):
     # Changing the values to integers
     map[map=="f"] = 0
-    map[map == "w"] = 1
-    map[map=="p"] = 2
+    map[map=="p"] = 1
+
+    # Getting the wall number
+    map[map == "w"] = 2
+    map[map == "w_0"] = 3
+    map[map == "w_1"] = 4
+    map[map == "w_2"] = 5
+    map[map == "w_3"] = 6
 
     try:
         map = np.double(map)
@@ -489,45 +499,68 @@ u_analytic_mean = np.mean(u_vals)
 # =============================================================================
 #                             Setting Up Problem
 # =============================================================================
-pressure_solve = "gradient"
+pressure_solve = "gradient" # "constant_gradient"
+output_file = "./Output/MB_20.h5"
+show_progress = False
+write_interval = 0.005
+dt_multiplier = 0.5
 
+real_start_time = time.time()
+elapsed_time = lambda st_t: time.time() - st_t
 
 # Initializing the domain class
-dc = domain_class(N_x=0,
-                  N_y=50,
-                  L_x=0.01,
-                  L_y=0.01,
-                  dt = 1e-3
+dc = domain_class(N_x=300,
+                  N_y=0,
+                  L_x=0.2,
+                  L_y=0.1,
+                  dt = 5e-6
                   # dP_x=dP_analytic THis is not used
                   )
 dc.rho   = 1e3   # kg/m^3
 dc.nu    = 1e-6  # m^2/s
+dc.check_dt = True
 
 # Setting initial pressure gradient
 dc.dP_x = 0 #dP_analytic
 dc.dP_y = 0
 
 # Initial Velocities
-dc.u_init = u_analytic_mean
-dc.v_init = 0
+dc.u_init = 0.0 #u_analytic_mean
+dc.v_init = 0 #u_analytic_mean
 
-# wall velocities
-dc.u_B = [0.0]
+# Setting the time
+dc.T = 6
+dc.N_t = dc.T/dc.dt
 
-dc.left = "wall"
-dc.right = "wall"
-dc.set_bounds()
+# dc.left = "wall"
+# dc.right = "wall"
+# dc.set_bounds()
 
 # Putting a blockage in the flow
-width = 0.002
-st_x    = int(dc.N_x//2 - (width//dc.h)*0.5)
+width = 0.01
+st_x    = int(dc.N_x//1.7 - (width//dc.h)*0.5)
 en_x = int(st_x+width//dc.h)
-height = 0.003
-st_y    = int(dc.N_y//2 - (height//dc.h)*0.5)
+height = 0.04
+st_y    = 0 #int(dc.N_y//2 - (height//dc.h)*0.5)
 en_y = int(st_y+height//dc.h)
 
-# dc.domain_map[st_x:en_x,st_y:en_y] = "w"
-# dc.domain_map[-16:-13,6:12] = "w"
+width2 = 0.015
+st_x2 = int(dc.N_x//1.7 - ((width+width2)//dc.h)*0.5)
+en_x2 = int(st_x2+(width2)//dc.h)
+height2 = 0.005
+st_y2 = int(en_y)
+en_y2 = int(st_y+(height+height2)//dc.h)
+
+dc.domain_map[st_x:en_x,st_y:en_y] = "w"
+dc.domain_map[st_x2:en_x2,st_y2:en_y2] = "w"
+
+# Changing the wall numbers
+dc.domain_map[dc.domain_map == "w"] = "w_0"
+dc.domain_map[:,-1] = "w_1"
+
+# wall velocities
+dc.u_B = [4.69, 0]
+dc.v_B = [0,0]
 
 # Initializing the flow class
 fc = flow_class(dc)
@@ -540,6 +573,7 @@ dP_y = fc.dP_y
 # Showing a picture of the domain
 show_my_domain = False
 if show_my_domain:
+    plt.figure()
     show_domain(dc.domain_map.T)
     plt.show()
     exit()
@@ -559,95 +593,114 @@ y_vals = dc.y_grid
 N_x    = dc.N_x
 N_y    = dc.N_y
 
-plt.figure()
-my_plot1 = plt.subplot(2,1,1)
-my_plot2 = plt.subplot(2,2,3)
-my_plot3 = plt.subplot(2,2,4)
-my_plot4 = plt.subplot(2,1,2)
+# This is a counting variable for saving hdf5 file
+save_count = 0
+
+if show_progress:
+    plt.figure()
+    my_plot1 = plt.subplot(2,1,1)
+    my_plot2 = plt.subplot(2,2,3)
+    my_plot3 = plt.subplot(2,2,4)
+    my_plot4 = plt.subplot(2,1,2)
 while t < dc.T: # and not user_done:
-    # --> VECTOR FIELD PLOT
-    make_plot(my_plot1, x_vals, y_vals,
-              u_list[-1][1:-1,1:-1].T,
-              v_list[-1][1:-1,1:-1].T,
-              LB=0,
-              UB=dc.L_y,
-              plot_type="field",
-              sub_type=[]
-              )
-    # Axis labels and title
-    my_plot1.set_title(str(round(t,6)))
-    my_plot1.set_xlabel("x")
-    my_plot1.set_ylabel("y")
+    if show_progress:
+        # --> VECTOR FIELD PLOT
+        my_plot1.clear()
+        make_plot(my_plot1, x_vals, y_vals,
+                  u_list[-1][1:-1,1:-1].T,
+                  v_list[-1][1:-1,1:-1].T,
+                  LB=0,
+                  UB=dc.L_y,
+                  plot_type="field",
+                  sub_type=[]
+                  )
+        # Axis labels and title
+        my_plot1.set_title(str(round(t,6)))
+        my_plot1.set_xlabel("x")
+        my_plot1.set_ylabel("y")
 
-    # --> PRESSURE GRADIENT FIELD
-    make_plot(my_plot4, x_vals, y_vals,
-              dP_x_list[-1][1:-1,1:-1].T,
-              dP_y_list[-1][1:-1,1:-1].T,
-              LB=0,
-              UB=dc.L_y,
-              plot_type="field",
-              sub_type=[]
-              )
-    # Axis labels and title
-    # my_plot1.set_title(str(round(t,6)))
-    my_plot1.set_xlabel("x")
-    my_plot1.set_ylabel("y")
+        # --> PRESSURE GRADIENT FIELD
+        my_plot4.clear()
+        make_plot(my_plot4, x_vals, y_vals,
+                  dP_x_list[-1][1:-1,1:-1].T,
+                  dP_y_list[-1][1:-1,1:-1].T,
+                  LB=0,
+                  UB=dc.L_y,
+                  plot_type="field",
+                  sub_type=[]
+                  )
+        # Axis labels and title
+        # my_plot1.set_title(str(round(t,6)))
+        my_plot1.set_xlabel("x")
+        my_plot1.set_ylabel("y")
 
-    # # --> U DISTRIBITION PROFILE
-    # make_plot(my_plot2, x_vals, y_vals,
-    #           u_list[-1][1:-1,1:-1].T,
-    #           v_list[-1][1:-1,1:-1].T,
-    #           LB=0,
-    #           UB=dc.L_y,
-    #           plot_type="profile",
-    #           sub_type=["u","y"],
-    #           show_0="x"
-    #           )
-    #
-    # # Axis labels and title
-    # my_plot2.set_xlabel("x-velocity (->)")
-    # my_plot2.set_ylabel("y")
-    #
-    # # --> V DISTRIBUTION PROFILE
-    # make_plot(my_plot3, x_vals, y_vals,
-    #           u_list[-1][1:-1,1:-1],
-    #           v_list[-1][1:-1,1:-1],
-    #           # LB=0,
-    #           # UB=dc.L_x,
-    #           plot_type="profile",
-    #           sub_type=["x","v"],
-    #           show_0="y"
-    #           )
-    #
-    # # Axis labels and title
-    # my_plot3.set_xlabel("y-velocity (^)")
-    # my_plot3.set_ylabel("y")
+        # # --> U DISTRIBITION PROFILE
+        # my_plot2.clear()
+        # make_plot(my_plot2, x_vals, y_vals,
+        #           u_list[-1][1:-1,1:-1].T,
+        #           v_list[-1][1:-1,1:-1].T,
+        #           LB=0,
+        #           UB=dc.L_y,
+        #           plot_type="profile",
+        #           sub_type=["u","y"],
+        #           show_0="x"
+        #           )
+        #
+        # # Axis labels and title
+        # my_plot2.set_xlabel("x-velocity (->)")
+        # my_plot2.set_ylabel("y")
+        #
+        # # --> V DISTRIBUTION PROFILE
+        # my_plot3.clear()
+        # make_plot(my_plot3, x_vals, y_vals,
+        #           u_list[-1][1:-1,1:-1],
+        #           v_list[-1][1:-1,1:-1],
+        #           # LB=0,
+        #           # UB=dc.L_x,
+        #           plot_type="profile",
+        #           sub_type=["x","v"],
+        #           show_0="y"
+        #           )
+        #
+        # # Axis labels and title
+        # my_plot3.set_xlabel("y-velocity (^)")
+        # my_plot3.set_ylabel("y")
 
-    # Showing the plot
-    plt.pause(0.001)
+        # Showing the plot
+        plt.pause(0.001)
 
-    # Showing the initial Conditions
-    if t == 0:
-        plt.pause(0.0001)
-    # exit()
+        # Showing the initial Conditions
+        if t == 0:
+            plt.pause(0.0001)
+        # exit()
 
     # --> Checking time step if desired
     if dc.check_dt:
-        # checking dt
-        eps_x = (np.mean(u[1:-1,1:-1])**3)/dc.L_x
-        eps_y = (np.mean(v[1:-1,1:-1])**3)/dc.L_y
-        if eps_x != 0:
-            Tou_x = abs((nu/eps_x))**0.5
-            if dc.dt/Tou_x > 1 :
-                dum = dc.dt
-                dc.dt = Tou_x*0.7
-                print("\n","decreasing dt  " + str(round(dum,5)) + " --> " + str(round(dc.dt,5)))
-        if eps_y != 0:
-            Tou_y = abs((nu/eps_y))**0.5
-            if dc.dt/Tou_y > 1:
-                dum = dc.dt
-                dc.dt = Tou_y*0.7
-                print("\n","decreasing dt  " + str(round(dum,5)) + " --> " + str(round(dc.dt,5)))
+        # Getting the magnitude of velocity at each point
+        vel_mag = ((u**2 + v**2)**(0.5))/2
+
+        # Max Velocity
+        max_vel = np.max(vel_mag)
+
+        # Ensuring the maximum velocity is not 0
+        if max_vel != 0:
+            dc.dt = (dc.h/max_vel) * dt_multiplier
+
+        # # checking dt
+        # eps_x = (np.mean(u[1:-1,1:-1])**3)/dc.L_x
+        # eps_y = (np.mean(v[1:-1,1:-1])**3)/dc.L_y
+        # if eps_x != 0:
+        #     Tou_x = abs((nu/eps_x))**0.5
+        #     if dc.dt/Tou_x > 1 :
+        #         dum = dc.dt
+        #         dc.dt = Tou_x*0.7
+        #         print("\n","decreasing dt  " + str(round(dum,5)) + " --> " + str(round(dc.dt,5)))
+        # if eps_y != 0:
+        #     Tou_y = abs((nu/eps_y))**0.5
+        #     if dc.dt/Tou_y > 1:
+        #         dum = dc.dt
+        #         dc.dt = Tou_y*0.7
+        #         print("\n","decreasing dt  " + str(round(dum,5)) + " --> " + str(round(dc.dt,5)))
 
     A_x = np.zeros(u.shape)
     A_y = np.zeros(v.shape)
@@ -733,7 +786,27 @@ while t < dc.T: # and not user_done:
     dP_x_list.append(dP_x)
     dP_y_list.append(dP_y)
 
-
+    # Saving an HDF5 File
+    if save_count * write_interval <= t or t == dc.T:
+        dm = dc.domain_map
+        hf = h5py.File(output_file, "w")
+        hf.create_dataset("u", data=u_list)
+        hf.create_dataset("v", data=v_list)
+        hf.create_dataset("t", data=t_list)
+        hf.create_dataset("dP_x", data=dP_x_list)
+        hf.create_dataset("dP_y", data=dP_y_list)
+        hf.create_dataset("x", data=x_vals)
+        hf.create_dataset("y", data=y_vals)
+        # hf.create_dataset("domain_map", data=dm)
+        # hf.create_dataset("domain", data=dc)
+        hf.close()
+        save_count += 1
+        print("")
+        print("Wrote Output at t = ", round(t,5))
+        print("Real Elapsed Time =", elapsed_time(real_start_time))
+        print("dt = ", dc.dt)
 
 print("Simulation Completed")
 plt.show()
+
+exit()
