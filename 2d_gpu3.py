@@ -13,6 +13,7 @@ import numpy as np
 # import pandas as pd
 import matplotlib.pyplot as plt
 import h5py
+from numba import jit, cuda, vectorize, float64, float32, guvectorize
 
 # NOTE: This code is going ot be set up to basically always carry 'ghost' cells from boundaries.
     #   This implies the matrices will have an extra dimension compared to the
@@ -21,6 +22,29 @@ import h5py
 # =============================================================================
 #                                 Functions
 # =============================================================================
+my_target = "cpu"
+data_type = "float64"
+
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def dP_x_new_fun(C, dP_x, rho, h, dt, u_ishift_star, v_ishift_star):
+    return (1/C[1:-1,1:-1]) * (dP_x[2:,1:-1] + dP_x[:-2,1:-1] + dP_x[1:-1,2:] + dP_x[1:-1,:-2]
+                  - (rho * h/dt)*(
+                    (u_ishift_star[2:,1:-1] + u_ishift_star[1:-1,1:-1])
+                  - (u_ishift_star[1:-1,1:-1] + u_ishift_star[:-2,1:-1])
+                  + (v_ishift_star[2:,1:-1] + v_ishift_star[1:-1,1:-1])
+                  - (v_ishift_star[2:,:-2] + v_ishift_star[1:-1,:-2])))
+
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def dP_y_new_fun(C, dP_y, rho, h, dt, u_ishift_star, v_ishift_star):
+    return (1/C[1:-1,1:-1]) * (dP_y[1:-1,2:] + dP_y[1:-1,:-2] + dP_y[2:,1:-1] + dP_y[:-2,1:-1]
+                  - (rho * h/dt)*(
+                    (v_ishift_star[1:-1,2:]   + v_ishift_star[1:-1,1:-1])
+                  - (v_ishift_star[1:-1,1:-1]     + v_ishift_star[1:-1,:-2])
+                  + (u_ishift_star[1:-1,2:]   + u_ishift_star[1:-1,1:-1])
+                  - (u_ishift_star[:-2,2:] + u_ishift_star[:-2,1:-1])))
+
 def make_plot(mp, x, y, u, v, **kwargs):
     # Handling optional arguments
     LB = kwargs.get("LB",[])
@@ -291,6 +315,9 @@ class domain_class:
         self.t = kwargs.get("t", 0)
         self.T  = kwargs.get("T", self.N_t * self.dt)
 
+        # Data type
+        self.data_type = kwargs.get("data_type","float64")
+
         # Wall Velocities [m/s]
         self.u_B = [0]
         self.v_B = [0]
@@ -378,6 +405,22 @@ class domain_class:
 
         self.C = calc_C(self.domain_map)
 
+    def check_dtype(self):
+        if self.data_type == "float64":
+            self.h = np.float64(self.h)
+            self.dt = np.float64(self.dt)
+            self.t = np.float64(self.t)
+            self.T = np.float64(self.T)
+            self.rho = np.float32(self.rho)
+            self.nu = np.float32(self.nu)
+        elif self.data_type == "float32":
+            self.h = np.float32(self.h)
+            self.dt = np.float32(self.dt)
+            self.t = np.float32(self.t)
+            self.T = np.float32(self.T)
+            self.rho = np.float32(self.rho)
+            self.nu = np.float32(self.nu)
+
 class flow_class:
     def __init__(self,domain_class):
         dc = domain_class
@@ -399,6 +442,19 @@ class flow_class:
         # Setting the boundaries on the initial Pressure Array
         self.dP_x = set_ghost(dc.domain_map, self.dP_x, dc.u_B, type="pressure",source=dc.dP_x_S)
         self.dP_y = set_ghost(dc.domain_map, self.dP_y, dc.v_B, type="pressure",source=dc.dP_y_S)
+
+        if dc.data_type == "float64":
+            self.u.astype(np.float64)
+            self.v.astype(np.float64)
+            self.t = np.float64(self.t)
+            self.dP_x.astype(np.float64)
+            self.dP_y.astype(np.float64)
+        elif dc.data_type == "float32":
+            self.u.astype(np.float32)
+            self.v.astype(np.float32)
+            self.t = np.float32(self.t)
+            self.dP_x.astype(np.float32)
+            self.dP_y.astype(np.float32)
 
 def bound_list(map,loc,**kwargs):
     # Returns a list of the fluids on surrounding a given index in a given domain
@@ -456,13 +512,18 @@ def calc_C(map):
             C[i,j] = np.sum(my_bool_f) + np.sum(my_bool_p)
 
     return C
-def check_conv(past, current, tol):
 
-    diff = abs(past - current)
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:])"],nopython=True,target=my_target)
+def calc_diff(past,current):
+    return np.absolute(past - current)
+
+def check_conv(past, current, tol):
+    diff = calc_diff(past, current)
     if np.all(diff < tol):
         return True
     else:
         return False
+
 def calc_pressure(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
 
     x_len, y_len = dc.domain_map.shape
@@ -477,24 +538,13 @@ def calc_pressure(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
     x_conv = False
     y_conv = False
     count = 0
-    while not x_conv and not y_conv and count < 50:
-        for i in range(1,x_len):
-            for j in range(1,y_len):
-                if not x_conv:
-                    dP_x_new[i,j] = (1/dc.C[i,j]) * (dP_x[i+1,j] + dP_x[i-1,j] + dP_x[i,j+1] + dP_x[i,j-1]
-                                  - (dc.rho * dc.h/dc.dt)*(
-                                    (u_ishift_star[i+1,j] + u_ishift_star[i,j])
-                                  - (u_ishift_star[i,j] + u_ishift_star[i-1,j])
-                                  + (v_ishift_star[i+1,j] + v_ishift_star[i,j])
-                                  - (v_ishift_star[i+1,j-1] + v_ishift_star[i,j-1])))
 
-                if not y_conv:
-                    dP_y_new[i,j] = (1/dc.C[i,j]) * (dP_y[i,j+1] + dP_y[i,j-1] + dP_y[i+1,j] + dP_y[i-1,j]
-                                  - (dc.rho * dc.h/dc.dt)*(
-                                    (v_ishift_star[i,j+1]   + v_ishift_star[i,j])
-                                  - (v_ishift_star[i,j]     + v_ishift_star[i,j-1])
-                                  + (u_ishift_star[i,j+1]   + u_ishift_star[i,j])
-                                  - (u_ishift_star[i-1,j+1] + u_ishift_star[i-1,j])))
+    while not x_conv and not y_conv and count < 100:
+        if not x_conv: # (i+1) = 2:, (i-1) = :-2, i = 1:-1
+            dP_x_new[1:-1,1:-1] = dP_x_new_fun(dc.C, dP_x, dc.rho, dc.h, dc.dt, u_ishift_star, v_ishift_star)
+
+        if not y_conv:
+            dP_y_new[1:-1,1:-1] = dP_y_new_fun(dc.C, dP_y, dc.rho, dc.h, dc.dt, u_ishift_star, v_ishift_star)
 
         # Checking if the current time step converges with the new step
         x_conv = check_conv(dP_x, dP_x_new, tol)
@@ -510,6 +560,58 @@ def calc_pressure(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
         print("pressure took ",count," to converge")
     return dP_x_new, dP_y_new
 
+@jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def A_x_fun(h,u,v): # (i+1) = 2:, (i-1) = :-2, i = 1:-1
+    return ((1.0/(4.0*h)) * ( (u[2:,1:-1] + u[1:-1,1:-1])**2.0 - (u[:-2,1:-1] + u[1:-1,1:-1])**2.0
+                           + (u[1:-1,2:] + u[1:-1,1:-1]) * (1.0/4.0)*((v[1:-1,1:-1]+v[1:-1,2:]+v[2:,1:-1]+v[2:,2:]) + (v[1:-1,1:-1]+v[1:-1,2:]+v[:-2,1:-1]+v[:-2,2:]))
+                           - (u[1:-1,1:-1] + u[1:-1,:-2]) * (1.0/4.0)*((v[1:-1,1:-1]+v[1:-1,:-2]+v[2:,1:-1]+v[2:,:-2]) + (v[1:-1,1:-1]+v[1:-1,:-2]+v[:-2,1:-1]+v[:-2,:-2])) ))
+
+@jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def A_y_fun(h,u,v):
+    return (1.0/(4.0*h)) * ( (v[1:-1,2:] + v[1:-1,1:-1])**2.0 - (v[1:-1,:-2] + v[1:-1,1:-1])**2.0
+                          + (v[2:,1:-1] + v[1:-1,1:-1]) * (1.0/4.0)*((u[1:-1,1:-1]+u[1:-1,2: ]+u[2:,1:-1]+u[2:,2:]) + (u[1:-1,1:-1]+u[1:-1,2:]+u[:-2,1:-1]+u[:-2,2:]))
+                          - (v[1:-1,1:-1] + v[:-2,1:-1]) * (1.0/4.0)*((u[1:-1,1:-1]+u[1:-1,:-2]+u[2:,1:-1]+u[2:,:-2]) + (u[1:-1,1:-1]+u[1:-1,:-2]+u[:-2,1:-1]+u[:-2,:-2])) )
+
+@jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def D_fun(h,vel):
+    return (1/h**2) * ( vel[2:,1:-1] + vel[:-2,1:-1] + vel[1:-1,2:] + vel[1:-1,:-2] - 4*vel[1:-1,1:-1])
+
+# @vectorize(['float32(float32, float32, float32)',
+#             '" + data_type + "(" + data_type + ", " + data_type + ", " + data_type + ")'],
+#            target='cuda')
+
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "," + data_type + "[:,:]," + data_type + "," + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def vel_star(vel, dt, A, nu, D):
+    return vel + dt * ( -A + nu * D )
+
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:])"], nopython=True, target=my_target)
+def shift_values(vel_star):
+    return (1/2) * ( vel_star[2:,1:-1] + vel_star[1:-1,1:-1] )
+
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + ")"],
+      nopython=True, target=my_target)
+def vel_ishift_fun(vel_ishift_star, dt, rho, h, dP, F):
+    return vel_ishift_star - (dt/(rho*h)) * dP * h + F
+
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def u_new_fun(vel_shift):
+    return (1/2) * (vel_shift[1:-1,1:-1] + vel_shift[:-2,1:-1])
+
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def v_new_fun(vel_shift):
+    return (1/2) * (vel_shift[1:-1,1:-1] + vel_shift[1:-1,:-2])
+
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def vel_mag_fun(u,v):
+    vel_mag = ((u**2 + v**2)**(0.5))/2
+    return vel_mag
 # =============================================================================
 #                             Analytic Solution
 # =============================================================================
@@ -532,8 +634,7 @@ u_analytic_mean = np.mean(u_vals)
 # =============================================================================
 #                             Setting Up Problem
 # =============================================================================
-# 16.873
-# @123.2s, t = 0.06048
+# N_y = 100 => Real Elapsed Time 84.5124s, Sim Time 91.861
 pressure_solve = "gradient" # "constant_gradient"
 output_file = "./Output/MB_26.h5"
 show_progress = False
@@ -548,16 +649,20 @@ elapsed_time = lambda st_t: time.time() - st_t
 
 # Initializing the domain class
 dc = domain_class(N_x=0,
-                  N_y=350,
+                  N_y=100,
                   L_x=0.02,
                   L_y=0.04,
-                  dt = 5e-6
+                  dt = 5e-6,
+                  data_type=data_type
                   # dP_x=dP_analytic THis is not used
                   )
 dc.rho   = 1e3   # kg/m^3
 dc.nu    = 1e-6  # m^2/s
 dc.check_dt = True
 
+dc.check_dtype()
+# print(dc.h)
+# exit()
 # Setting initial pressure gradient
 dc.dP_x = 0 #dP_analytic
 dc.dP_y = 0
@@ -567,7 +672,7 @@ dc.u_init = 0 #u_analytic_mean
 dc.v_init = 0 #u_analytic_mean
 
 # Setting the time
-dc.T = 1
+dc.T = 2
 dc.N_t = dc.T/dc.dt
 
 dc.top   = "wall"
@@ -591,8 +696,8 @@ height2 = 0.0005
 st_y2 = int(en_y)
 en_y2 = int(st_y+(height+height2)//dc.h)
 
-# dc.domain_map[st_x:en_x,st_y:en_y] = "w"
-# dc.domain_map[st_x2:en_x2,st_y2:en_y2] = "w"
+dc.domain_map[st_x:en_x,st_y:en_y] = "w"
+dc.domain_map[st_x2:en_x2,st_y2:en_y2] = "w"
 
 # Changing the wall numbers
 dc.domain_map[dc.domain_map == "w"] = "w_0"
@@ -651,6 +756,23 @@ x_vals = dc.x_grid
 y_vals = dc.y_grid
 N_x    = dc.N_x
 N_y    = dc.N_y
+
+if dc.data_type == "float64":
+    numpy_dtype = np.float64
+if dc.data_type == "float32":
+    numpy_dtype = np.float32
+A_x = np.zeros(u.shape, dtype=numpy_dtype)
+A_y = np.zeros(v.shape, dtype=numpy_dtype)
+D_x = np.zeros(u.shape, dtype=numpy_dtype)
+D_y = np.zeros(v.shape, dtype=numpy_dtype)
+u_star = np.zeros(u.shape, dtype=numpy_dtype)
+v_star = np.zeros(u.shape, dtype=numpy_dtype)
+u_ishift = np.zeros(u.shape, dtype=numpy_dtype)
+v_ishift = np.zeros(v.shape, dtype=numpy_dtype)
+u_ishift_star = np.zeros(u.shape, dtype=numpy_dtype)
+v_ishift_star = np.zeros(v.shape, dtype=numpy_dtype)
+u_new = np.zeros(u.shape, dtype=numpy_dtype)
+v_new = np.zeros(v.shape, dtype=numpy_dtype)
 
 # This is a counting variable for saving hdf5 file
 save_count = 0
@@ -730,13 +852,14 @@ while t < dc.T: # and not user_done:
 
         # Showing the initial Conditions
         if t == 0:
-            plt.pause(1)
+            plt.pause(1e-4)
         # exit()
 
     # --> Checking time step if desired
     if dc.check_dt:
+
         # Getting the magnitude of velocity at each point
-        vel_mag = ((u**2 + v**2)**(0.5))/2
+        vel_mag = vel_mag_fun(u,v)
 
         # Max Velocity
         max_vel = np.max(vel_mag)
@@ -751,46 +874,36 @@ while t < dc.T: # and not user_done:
         if dc.dt < dt_min:
             dc.dt = dt_min
 
-    A_x = np.zeros(u.shape)
-    A_y = np.zeros(v.shape)
-    D_x = np.zeros(u.shape)
-    D_y = np.zeros(v.shape)
-    u_star = np.zeros(u.shape)
-    v_star = np.zeros(u.shape)
-    for i in range(1, 1 + dc.N_x):
-        for j in range(1, 1 + dc.N_y):
-            # Advection Term
-            A_x[i,j] = (1/(4*dc.h)) * ( (u[i+1,j] + u[i,j])**2 - (u[i-1,j] + u[i,j])**2
-                                   + (u[i,j+1] + u[i,j]) * (1/4)*((v[i,j]+v[i,j+1]+v[i+1,j]+v[i+1,j+1]) + (v[i,j]+v[i,j+1]+v[i-1,j]+v[i-1,j+1]))
-                                   - (u[i,j] + u[i,j-1]) * (1/4)*((v[i,j]+v[i,j-1]+v[i+1,j]+v[i+1,j-1]) + (v[i,j]+v[i,j-1]+v[i-1,j]+v[i-1,j-1])) )
+    # Reseting values
+    # A_x[:] = 0
+    # A_y[:] = 0
+    # D_x[:] = 0
+    # D_y[:] = 0
+    # u_star[:] = 0
+    # v_star[:] = 0
+    # u_ishift[:] = 0
+    # v_ishift[:] = 0
+    # u_ishift_star[:] = 0
+    # v_ishift_star[:] = 0
 
-            A_y[i,j] = (1/(4*dc.h)) * ( (v[i,j+1] + v[i,j])**2 - (v[i,j-1] + v[i,j])**2
-                                  + (v[i+1,j] + v[i,j]) * (1/4)*((u[i,j]+u[i,j+1 ]+u[i+1,j]+u[i+1,j+1]) + (u[i,j]+u[i,j+1]+u[i-1,j]+u[i-1,j+1]))
-                                  - (v[i,j] + v[i-1,j]) * (1/4)*((u[i,j]+u[i,j-1]+u[i+1,j]+u[i+1,j-1]) + (u[i,j]+u[i,j-1]+u[i-1,j]+u[i-1,j-1])) )
-
-            # Diffusion Term
-            D_x[i,j] = (1/dc.h**2) * ( u[i+1,j] + u[i-1,j] + u[i,j+1] + u[i,j-1] - 4*u[i,j])
-            D_y[i,j] = (1/dc.h**2) * ( v[i+1,j] + v[i-1,j] + v[i,j+1] + v[i,j-1] - 4*v[i,j])
+    # Getting values for the predictor step
+    A_x[1:-1,1:-1] = A_x_fun(dc.h,u,v)
+    A_y[1:-1,1:-1] = A_y_fun(dc.h,u,v)
+    D_x[1:-1,1:-1] = D_fun(dc.h, u)
+    D_y[1:-1,1:-1] = D_fun(dc.h, v)
 
     # Predictor Step
-    u_star = u + dc.dt * ( -A_x + nu * D_x )
-    v_star = v + dc.dt * ( -A_y + nu * D_y )
+    u_star = vel_star(u, dc.dt, A_x, nu, D_x) # u + dc.dt * ( -A_x + nu * D_x )
+    v_star = vel_star(v, dc.dt, A_y, nu, D_y) #v + dc.dt * ( -A_y + nu * D_y )
 
     # Doing the boundaries on the star velocities
     u_star = set_ghost(dc.domain_map, u_star, dc.u_B, source=dc.u_S)
     v_star = set_ghost(dc.domain_map, v_star, dc.v_B, source=dc.v_S)
 
-    u_ishift = np.zeros(u.shape)
-    v_ishift = np.zeros(v.shape)
-    u_ishift_star = np.zeros(u.shape)
-    v_ishift_star = np.zeros(v.shape)
-    for i in range(1, 1 + dc.N_x):
-        for j in range(1, 1 + dc.N_y):
-            # Getting the shifted star velocities
-            # u_ishift_star = (1/2) * (u_star[2:-1] + u_star[1:-2])
-            u_ishift_star[i,j] = (1/2) * ( u_star[i+1,j] + u_star[i,j] )
-            v_ishift_star[i,j] = (1/2) * ( v_star[i,j+1] + v_star[i,j] )
-
+    # Shifting the velocitiy values
+    u_ishift_star[1:-1,1:-1] = shift_values(u_star)
+    # exit()
+    v_ishift_star[1:-1,1:-1] = shift_values(v_star)
 
     # Calculating the new pressures if it is desired
     if pressure_solve == "gradient":
@@ -802,20 +915,16 @@ while t < dc.T: # and not user_done:
         dP_y = fc.dP_y
 
     # Calculating the new time velocities
-    u_ishift = u_ishift_star - (dc.dt/(rho*dc.h)) * dP_x * dc.h + dc.F_x
-    v_ishift = v_ishift_star - (dc.dt/(rho*dc.h)) * dP_y * dc.h + dc.F_y
+    u_ishift = vel_ishift_fun(u_ishift_star, dc.dt, rho, dc.h, dP_x, dc.F_x)
+    v_ishift = vel_ishift_fun(v_ishift_star, dc.dt, rho, dc.h, dP_y, dc.F_y)
 
     # Applying boundaries to the shifted velocities
     u_ishift = set_ghost(dc.domain_map,u_ishift,dc.u_B,source=dc.u_S)
     v_ishift = set_ghost(dc.domain_map,v_ishift,dc.v_B,source=dc.v_S)
 
     # Getting the unshifted values back out
-    u_new = np.zeros(u.shape)
-    v_new = np.zeros(v.shape)
-    for i in range(1, 1 + N_x):
-        for j in range(1, 1 + N_y):
-            u_new[i,j] = (1/2) * (u_ishift[i,j] + u_ishift[i - 1,j])
-            v_new[i,j] = (1/2) * (v_ishift[i,j] + v_ishift[i,j - 1])
+    u_new[1:-1,1:-1] = u_new_fun(u_ishift)
+    v_new[1:-1,1:-1] = v_new_fun(v_ishift)
 
     # Setting boundary Conditions and updating time
     u_new = set_ghost(dc.domain_map,u_new, dc.u_B,source=dc.u_S)

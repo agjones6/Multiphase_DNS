@@ -72,14 +72,14 @@ def make_plot(mp, x, y, u, v, **kwargs):
 
 # Defining the hdf5 file
 mb_num = 26
-skip_num = 25
+skip_num = 2
 my_dpi = 400
 my_fps = 25
 my_file    = "./Output/MB_" + str(mb_num) + ".h5"
 video_name = "./Videos/MB_" + str(mb_num) + ".mp4"
 
-show_fig = False
-save_fig = True
+show_fig = True
+save_fig = False
 
 # Importing the h5 file
 hf = h5py.File(my_file, "r")

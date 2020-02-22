@@ -13,7 +13,7 @@ import numpy as np
 # import pandas as pd
 import matplotlib.pyplot as plt
 import h5py
-from numba import jit, cuda
+# from numba import jit, cuda
 
 # NOTE: This code is going ot be set up to basically always carry 'ghost' cells from boundaries.
     #   This implies the matrices will have an extra dimension compared to the
@@ -139,7 +139,7 @@ def set_boundary(N_space,**kwargs):
 
     return map
 
-@jit(target = "cuda")
+# @jit(target = "cuda")
 def set_ghost(map, u, u_B=0, **kwargs):
 
     type = kwargs.get("type","velocity")
@@ -535,8 +535,8 @@ u_analytic_mean = np.mean(u_vals)
 #                             Setting Up Problem
 # =============================================================================
 pressure_solve = "gradient" # "constant_gradient"
-output_file = "./Output/MB_26.h5"
-show_progress = False
+output_file = "./Output/MB_27.h5"
+show_progress = True
 write_interval = 0.005
 dt_multiplier = 0.5
 
@@ -547,9 +547,9 @@ real_start_time = time.time()
 elapsed_time = lambda st_t: time.time() - st_t
 
 # Initializing the domain class
-dc = domain_class(N_x=350,
-                  N_y=0,
-                  L_x=0.025,
+dc = domain_class(N_x=0,
+                  N_y=50,
+                  L_x=0.02,
                   L_y=0.04,
                   dt = 5e-6
                   # dP_x=dP_analytic THis is not used
@@ -570,7 +570,7 @@ dc.v_init = 0 #u_analytic_mean
 dc.T = 10
 dc.N_t = dc.T/dc.dt
 
-dc.top   = "source"
+dc.top   = "wall"
 dc.bottom = "wall"
 dc.left  = "source"
 dc.right = "source"
@@ -591,8 +591,8 @@ height2 = 0.0005
 st_y2 = int(en_y)
 en_y2 = int(st_y+(height+height2)//dc.h)
 
-dc.domain_map[st_x:en_x,st_y:en_y] = "w"
-dc.domain_map[st_x2:en_x2,st_y2:en_y2] = "w"
+# dc.domain_map[st_x:en_x,st_y:en_y] = "w"
+# dc.domain_map[st_x2:en_x2,st_y2:en_y2] = "w"
 
 # Changing the wall numbers
 dc.domain_map[dc.domain_map == "w"] = "w_0"
@@ -600,23 +600,18 @@ dc.domain_map[dc.domain_map == "w"] = "w_0"
 
 # Changing Soure Numbers
 dc.domain_map[dc.domain_map == "s"] = "s_0"
-dc.domain_map[-1,:] = "s_1" # Left
-dc.domain_map[:,-1] = "s_1" # Right
+dc.domain_map[-1,:] = "s_1" # Right
+# dc.domain_map[:,-1] = "s_1" # Top
 
 # wall velocities
-dc.u_B = [1, 0] # 4.69 is the target for
+dc.u_B = [0, 0] # 4.69 is the target for
 dc.v_B = [0, 0]
 
 # Source Terms
-dc.u_S    = [0, 0]
+dc.u_S    = [0, -0.05]
 dc.v_S    = [0, 0]
 dc.dP_x_S = [0, 0]
 dc.dP_y_S = [0, 0]
-
-# Getting a mesh of x and y values
-# dc.x_grid = np.arange(0-dc.h/2,dc.L_x+dc.h/2,dc.h)
-# dc.y_grid = np.arange(0-dc.h/2,dc.L_y+dc.h/2,dc.h)
-
 
 # Initializing the flow class
 fc = flow_class(dc)
@@ -735,8 +730,11 @@ while t < dc.T: # and not user_done:
 
     # --> Checking time step if desired
     if dc.check_dt:
+        def vel_mag_fun(u,v):
+            vel_mag = ((u**2 + v**2)**(0.5))/2
+            return vel_mag
         # Getting the magnitude of velocity at each point
-        vel_mag = ((u**2 + v**2)**(0.5))/2
+        vel_mag = vel_mag_fun(u,v)
 
         # Max Velocity
         max_vel = np.max(vel_mag)
@@ -773,8 +771,10 @@ while t < dc.T: # and not user_done:
             D_y[i,j] = (1/dc.h**2) * ( v[i+1,j] + v[i-1,j] + v[i,j+1] + v[i,j-1] - 4*v[i,j])
 
     # Predictor Step
-    u_star = u + dc.dt * ( -A_x + nu * D_x )
-    v_star = v + dc.dt * ( -A_y + nu * D_y )
+    def vel_star(vel, dt, A, nu, D):
+        return vel + dt * ( -A + nu * D )
+    u_star = vel_star(u, dc.dt, -A_x, nu, D_x) # u + dc.dt * ( -A_x + nu * D_x )
+    v_star = vel_star(v, dc.dt, -A_y, nu, D_y) #v + dc.dt * ( -A_y + nu * D_y )
 
     # Doing the boundaries on the star velocities
     u_star = set_ghost(dc.domain_map, u_star, dc.u_B, source=dc.u_S)
