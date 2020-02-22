@@ -70,17 +70,23 @@ def D_fun(h,vel):
 def vel_star(vel, dt, A, nu, D):
     return vel + dt * ( -A + nu * D )
 
-@guvectorize(["void(" + data_type + "[:,:]," + data_type + "[:,:])"],
-                "(n,p)->(n,p)", nopython=True, target=my_target)
-def u_shift_values(vel_star, result):
+# @guvectorize(["void(" + data_type + "[:,:]," + data_type + "[:,:])"],
+#                 "(n,p)->(n,p)", nopython=True, target=my_target)
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def u_shift_values(vel_star):
     result = vel_star
     result[1:-1,1:-1] = (1/2) * ( vel_star[2:,1:-1] + vel_star[1:-1,1:-1] )
+    return result
 
-@guvectorize(["void(" + data_type + "[:,:]," + data_type + "[:,:])"],
-                "(n,p)->(n,p)", nopython=True, target=my_target)
-def v_shift_values(vel_star, result):
+# @guvectorize(["void(" + data_type + "[:,:]," + data_type + "[:,:])"],
+#                 "(n,p)->(n,p)", nopython=True, target=my_target)
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def v_shift_values(vel_star):
     result = vel_star
     result[1:-1,1:-1] = (1/2) * ( vel_star[1:-1,2:] + vel_star[1:-1,1:-1] )
+    return result
 
 @jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + ")"],
       nopython=True, target=my_target)
@@ -642,7 +648,7 @@ u_analytic_mean = np.mean(u_vals)
 # N_y = 100 => Real Elapsed Time 84.5124s, Sim Time 91.861
 pressure_solve = "gradient" # "constant_gradient"
 output_file = "./Output/MB_26.h5"
-show_progress = False
+show_progress = True
 write_interval = 0.005
 dt_multiplier = 0.5
 
@@ -907,10 +913,11 @@ while t < dc.T: # and not user_done:
 
     # Shifting the velocitiy values
     # u_ishift_star = u_shift_values(u_star,u_ishift_star)
-    u_shift_values(u_star,u_ishift_star)
+    u_ishift_star = u_shift_values(u_star)
+    print(u_ishift_star)
     # exit()
     # v_ishift_star = v_shift_values(v_star)
-    v_shift_values(u_star,v_ishift_star)
+    v_ishift_star = v_shift_values(v_star)
 
 
     # Calculating the new pressures if it is desired
