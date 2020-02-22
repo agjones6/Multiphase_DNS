@@ -45,6 +45,64 @@ def dP_y_new_fun(C, dP_y, rho, h, dt, u_ishift_star, v_ishift_star):
                   + (u_ishift_star[1:-1,2:]   + u_ishift_star[1:-1,1:-1])
                   - (u_ishift_star[:-2,2:] + u_ishift_star[:-2,1:-1])))
 
+@jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def A_x_fun(h,u,v): # (i+1) = 2:, (i-1) = :-2, i = 1:-1
+    return ((1.0/(4.0*h)) * ( (u[2:,1:-1] + u[1:-1,1:-1])**2.0 - (u[:-2,1:-1] + u[1:-1,1:-1])**2.0
+                           + (u[1:-1,2:] + u[1:-1,1:-1]) * (1.0/4.0)*((v[1:-1,1:-1]+v[1:-1,2:]+v[2:,1:-1]+v[2:,2:]) + (v[1:-1,1:-1]+v[1:-1,2:]+v[:-2,1:-1]+v[:-2,2:]))
+                           - (u[1:-1,1:-1] + u[1:-1,:-2]) * (1.0/4.0)*((v[1:-1,1:-1]+v[1:-1,:-2]+v[2:,1:-1]+v[2:,:-2]) + (v[1:-1,1:-1]+v[1:-1,:-2]+v[:-2,1:-1]+v[:-2,:-2])) ))
+
+@jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def A_y_fun(h,u,v):
+    return (1.0/(4.0*h)) * ( (v[1:-1,2:] + v[1:-1,1:-1])**2.0 - (v[1:-1,:-2] + v[1:-1,1:-1])**2.0
+                          + (v[2:,1:-1] + v[1:-1,1:-1]) * (1.0/4.0)*((u[1:-1,1:-1]+u[1:-1,2: ]+u[2:,1:-1]+u[2:,2:]) + (u[1:-1,1:-1]+u[1:-1,2:]+u[:-2,1:-1]+u[:-2,2:]))
+                          - (v[1:-1,1:-1] + v[:-2,1:-1]) * (1.0/4.0)*((u[1:-1,1:-1]+u[1:-1,:-2]+u[2:,1:-1]+u[2:,:-2]) + (u[1:-1,1:-1]+u[1:-1,:-2]+u[:-2,1:-1]+u[:-2,:-2])) )
+
+@jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def D_fun(h,vel):
+    return (1/h**2) * ( vel[2:,1:-1] + vel[:-2,1:-1] + vel[1:-1,2:] + vel[1:-1,:-2] - 4*vel[1:-1,1:-1])
+
+
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "," + data_type + "[:,:]," + data_type + "," + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def vel_star(vel, dt, A, nu, D):
+    return vel + dt * ( -A + nu * D )
+
+@guvectorize(["void(" + data_type + "[:,:]," + data_type + "[:,:])"],
+                "(n,p)->(n,p)", nopython=True, target=my_target)
+def u_shift_values(vel_star, result):
+    result = vel_star
+    result[1:-1,1:-1] = (1/2) * ( vel_star[2:,1:-1] + vel_star[1:-1,1:-1] )
+
+@guvectorize(["void(" + data_type + "[:,:]," + data_type + "[:,:])"],
+                "(n,p)->(n,p)", nopython=True, target=my_target)
+def v_shift_values(vel_star, result):
+    result = vel_star
+    result[1:-1,1:-1] = (1/2) * ( vel_star[1:-1,2:] + vel_star[1:-1,1:-1] )
+
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + ")"],
+      nopython=True, target=my_target)
+def vel_ishift_fun(vel_ishift_star, dt, rho, h, dP, F):
+    return vel_ishift_star - (dt/(rho*h)) * dP * h + F
+
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def u_new_fun(vel_shift):
+    return (1/2) * (vel_shift[1:-1,1:-1] + vel_shift[:-2,1:-1])
+
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def v_new_fun(vel_shift):
+    return (1/2) * (vel_shift[1:-1,1:-1] + vel_shift[1:-1,:-2])
+
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def vel_mag_fun(u,v):
+    vel_mag = ((u**2 + v**2)**(0.5))/2
+    return vel_mag
+
 def make_plot(mp, x, y, u, v, **kwargs):
     # Handling optional arguments
     LB = kwargs.get("LB",[])
@@ -559,59 +617,6 @@ def calc_pressure(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
     if count > 5:
         print("pressure took ",count," to converge")
     return dP_x_new, dP_y_new
-
-@jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
-      nopython=True, target=my_target)
-def A_x_fun(h,u,v): # (i+1) = 2:, (i-1) = :-2, i = 1:-1
-    return ((1.0/(4.0*h)) * ( (u[2:,1:-1] + u[1:-1,1:-1])**2.0 - (u[:-2,1:-1] + u[1:-1,1:-1])**2.0
-                           + (u[1:-1,2:] + u[1:-1,1:-1]) * (1.0/4.0)*((v[1:-1,1:-1]+v[1:-1,2:]+v[2:,1:-1]+v[2:,2:]) + (v[1:-1,1:-1]+v[1:-1,2:]+v[:-2,1:-1]+v[:-2,2:]))
-                           - (u[1:-1,1:-1] + u[1:-1,:-2]) * (1.0/4.0)*((v[1:-1,1:-1]+v[1:-1,:-2]+v[2:,1:-1]+v[2:,:-2]) + (v[1:-1,1:-1]+v[1:-1,:-2]+v[:-2,1:-1]+v[:-2,:-2])) ))
-
-@jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
-      nopython=True, target=my_target)
-def A_y_fun(h,u,v):
-    return (1.0/(4.0*h)) * ( (v[1:-1,2:] + v[1:-1,1:-1])**2.0 - (v[1:-1,:-2] + v[1:-1,1:-1])**2.0
-                          + (v[2:,1:-1] + v[1:-1,1:-1]) * (1.0/4.0)*((u[1:-1,1:-1]+u[1:-1,2: ]+u[2:,1:-1]+u[2:,2:]) + (u[1:-1,1:-1]+u[1:-1,2:]+u[:-2,1:-1]+u[:-2,2:]))
-                          - (v[1:-1,1:-1] + v[:-2,1:-1]) * (1.0/4.0)*((u[1:-1,1:-1]+u[1:-1,:-2]+u[2:,1:-1]+u[2:,:-2]) + (u[1:-1,1:-1]+u[1:-1,:-2]+u[:-2,1:-1]+u[:-2,:-2])) )
-
-@jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:])"],
-      nopython=True, target=my_target)
-def D_fun(h,vel):
-    return (1/h**2) * ( vel[2:,1:-1] + vel[:-2,1:-1] + vel[1:-1,2:] + vel[1:-1,:-2] - 4*vel[1:-1,1:-1])
-
-# @vectorize(['float32(float32, float32, float32)',
-#             '" + data_type + "(" + data_type + ", " + data_type + ", " + data_type + ")'],
-#            target='cuda')
-
-@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "," + data_type + "[:,:]," + data_type + "," + data_type + "[:,:])"],
-      nopython=True, target=my_target)
-def vel_star(vel, dt, A, nu, D):
-    return vel + dt * ( -A + nu * D )
-
-@jit(["" + data_type + "[:,:](" + data_type + "[:,:])"], nopython=True, target=my_target)
-def shift_values(vel_star):
-    return (1/2) * ( vel_star[2:,1:-1] + vel_star[1:-1,1:-1] )
-
-@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + ")"],
-      nopython=True, target=my_target)
-def vel_ishift_fun(vel_ishift_star, dt, rho, h, dP, F):
-    return vel_ishift_star - (dt/(rho*h)) * dP * h + F
-
-@jit(["" + data_type + "[:,:](" + data_type + "[:,:])"],
-      nopython=True, target=my_target)
-def u_new_fun(vel_shift):
-    return (1/2) * (vel_shift[1:-1,1:-1] + vel_shift[:-2,1:-1])
-
-@jit(["" + data_type + "[:,:](" + data_type + "[:,:])"],
-      nopython=True, target=my_target)
-def v_new_fun(vel_shift):
-    return (1/2) * (vel_shift[1:-1,1:-1] + vel_shift[1:-1,:-2])
-
-@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:])"],
-      nopython=True, target=my_target)
-def vel_mag_fun(u,v):
-    vel_mag = ((u**2 + v**2)**(0.5))/2
-    return vel_mag
 # =============================================================================
 #                             Analytic Solution
 # =============================================================================
@@ -901,9 +906,12 @@ while t < dc.T: # and not user_done:
     v_star = set_ghost(dc.domain_map, v_star, dc.v_B, source=dc.v_S)
 
     # Shifting the velocitiy values
-    u_ishift_star[1:-1,1:-1] = shift_values(u_star)
+    # u_ishift_star = u_shift_values(u_star,u_ishift_star)
+    u_shift_values(u_star,u_ishift_star)
     # exit()
-    v_ishift_star[1:-1,1:-1] = shift_values(v_star)
+    # v_ishift_star = v_shift_values(v_star)
+    v_shift_values(u_star,v_ishift_star)
+
 
     # Calculating the new pressures if it is desired
     if pressure_solve == "gradient":
