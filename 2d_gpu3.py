@@ -645,11 +645,11 @@ u_analytic_mean = np.mean(u_vals)
 # =============================================================================
 #                             Setting Up Problem
 # =============================================================================
-# N_y = 100 => Real Elapsed Time 84.5124s, Sim Time 91.861
+# N = 100, 2s T, 264.24s
 pressure_solve = "gradient" # "constant_gradient"
-output_file = "./Output/MB_26.h5"
-show_progress = False
-write_interval = 0.005
+output_file = "./Output/MB_28.h5"
+show_progress = True
+write_interval = 0.5
 dt_multiplier = 0.5
 
 dt_max = 0.1
