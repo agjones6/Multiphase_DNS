@@ -13,6 +13,7 @@ import numpy as np
 # import pandas as pd
 import matplotlib.pyplot as plt
 import h5py
+from numba import jit, cuda
 
 # NOTE: This code is going ot be set up to basically always carry 'ghost' cells from boundaries.
     #   This implies the matrices will have an extra dimension compared to the
@@ -138,6 +139,7 @@ def set_boundary(N_space,**kwargs):
 
     return map
 
+@jit(target = "cuda")
 def set_ghost(map, u, u_B=0, **kwargs):
 
     type = kwargs.get("type","velocity")

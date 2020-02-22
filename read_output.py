@@ -71,15 +71,15 @@ def make_plot(mp, x, y, u, v, **kwargs):
         mp.plot_surface(x,y,mag,cmap="jet")
 
 # Defining the hdf5 file
-mb_num = 22
-skip_num = 1
+mb_num = 26
+skip_num = 25
 my_dpi = 400
 my_fps = 25
 my_file    = "./Output/MB_" + str(mb_num) + ".h5"
 video_name = "./Videos/MB_" + str(mb_num) + ".mp4"
 
-show_fig = True
-save_fig = False
+show_fig = False
+save_fig = True
 
 # Importing the h5 file
 hf = h5py.File(my_file, "r")
@@ -112,8 +112,8 @@ def animate(i):
         i = len(t)-1
     my_plot1.clear()
     make_plot(my_plot1, x, y,
-              u[i,1:-1,1:-1].T,
-              v[i,1:-1,1:-1].T,
+              u[i,:,:].T,
+              v[i,:,:].T,
               plot_type="field",
               sub_type=[]
               )
@@ -124,8 +124,8 @@ def animate(i):
     # --> PRESSURE GRADIENT FIELD
     my_plot4.clear()
     make_plot(my_plot4, x, y,
-              dP_x[i,1:-1,1:-1].T,
-              dP_y[i,1:-1,1:-1].T,
+              dP_x[i,:,:].T,
+              dP_y[i,:,:].T,
               plot_type="field",
               sub_type=[]
               )
