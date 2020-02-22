@@ -648,7 +648,7 @@ u_analytic_mean = np.mean(u_vals)
 # N_y = 100 => Real Elapsed Time 84.5124s, Sim Time 91.861
 pressure_solve = "gradient" # "constant_gradient"
 output_file = "./Output/MB_26.h5"
-show_progress = True
+show_progress = False
 write_interval = 0.005
 dt_multiplier = 0.5
 
@@ -914,7 +914,6 @@ while t < dc.T: # and not user_done:
     # Shifting the velocitiy values
     # u_ishift_star = u_shift_values(u_star,u_ishift_star)
     u_ishift_star = u_shift_values(u_star)
-    print(u_ishift_star)
     # exit()
     # v_ishift_star = v_shift_values(v_star)
     v_ishift_star = v_shift_values(v_star)

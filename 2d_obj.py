@@ -532,8 +532,8 @@ u_analytic_mean = np.mean(u_vals)
 # =============================================================================
 #                             Setting Up Problem
 # =============================================================================
-# 16.873
-# @123.2s, t = 0.06048
+# N = 100, 2s T, 595.67s 
+#
 pressure_solve = "gradient" # "constant_gradient"
 output_file = "./Output/MB_26.h5"
 show_progress = False
@@ -548,7 +548,7 @@ elapsed_time = lambda st_t: time.time() - st_t
 
 # Initializing the domain class
 dc = domain_class(N_x=0,
-                  N_y=350,
+                  N_y=100,
                   L_x=0.02,
                   L_y=0.04,
                   dt = 5e-6
@@ -567,7 +567,7 @@ dc.u_init = 0 #u_analytic_mean
 dc.v_init = 0 #u_analytic_mean
 
 # Setting the time
-dc.T = 1
+dc.T = 2
 dc.N_t = dc.T/dc.dt
 
 dc.top   = "wall"
@@ -591,8 +591,8 @@ height2 = 0.0005
 st_y2 = int(en_y)
 en_y2 = int(st_y+(height+height2)//dc.h)
 
-# dc.domain_map[st_x:en_x,st_y:en_y] = "w"
-# dc.domain_map[st_x2:en_x2,st_y2:en_y2] = "w"
+dc.domain_map[st_x:en_x,st_y:en_y] = "w"
+dc.domain_map[st_x2:en_x2,st_y2:en_y2] = "w"
 
 # Changing the wall numbers
 dc.domain_map[dc.domain_map == "w"] = "w_0"
