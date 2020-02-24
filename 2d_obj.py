@@ -532,12 +532,12 @@ u_analytic_mean = np.mean(u_vals)
 # =============================================================================
 #                             Setting Up Problem
 # =============================================================================
-# N = 100, 2s T, 595.67s 
+# N = 100, 2s T, 595.67s
 #
 pressure_solve = "gradient" # "constant_gradient"
-output_file = "./Output/MB_26.h5"
+output_file = "./Output/MB_29.h5"
 show_progress = False
-write_interval = 0.005
+write_interval = 0.5
 dt_multiplier = 0.5
 
 dt_max = 0.1
@@ -567,7 +567,7 @@ dc.u_init = 0 #u_analytic_mean
 dc.v_init = 0 #u_analytic_mean
 
 # Setting the time
-dc.T = 2
+dc.T = 0.5
 dc.N_t = dc.T/dc.dt
 
 dc.top   = "wall"

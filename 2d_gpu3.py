@@ -647,8 +647,8 @@ u_analytic_mean = np.mean(u_vals)
 # =============================================================================
 # N = 100, 2s T, 264.24s
 pressure_solve = "gradient" # "constant_gradient"
-output_file = "./Output/MB_28.h5"
-show_progress = True
+output_file = "./Output/MB_29.h5"
+show_progress = False
 write_interval = 0.5
 dt_multiplier = 0.5
 
@@ -683,7 +683,7 @@ dc.u_init = 0 #u_analytic_mean
 dc.v_init = 0 #u_analytic_mean
 
 # Setting the time
-dc.T = 2
+dc.T = 0.5
 dc.N_t = dc.T/dc.dt
 
 dc.top   = "wall"
@@ -757,6 +757,7 @@ if show_my_domain:
 
 # Creating lists to store all of the variables
 u_list = [u]
+u_list2 = [u]
 v_list = [v]
 t_list = [t]
 dP_x_list = [dP_x]
@@ -952,15 +953,15 @@ while t < dc.T: # and not user_done:
     v[abs(v)<dc.lower_tolerance] = 0
 
     # Appending values to the lists for storage
-    u_list.append(u_new)
-    v_list.append(v_new)
+    u_list.append(u)
+    u_list2.append(u)
+    v_list.append(v)
     t_list.append(t)
     dP_x_list.append(dP_x)
     dP_y_list.append(dP_y)
 
     # Saving an HDF5 File
     if save_count * write_interval <= t or t == dc.T:
-        dm = dc.domain_map
         hf = h5py.File(output_file, "w")
         hf.create_dataset("u", data=u_list)
         hf.create_dataset("v", data=v_list)
@@ -979,7 +980,9 @@ while t < dc.T: # and not user_done:
         print("\tdt = ", dc.dt)
         print("")
     print(t)
+    # print(u_list[-1])
 print("Simulation Completed")
 plt.show()
 
 exit()
+# 35.48 10.859

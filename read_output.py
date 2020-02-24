@@ -71,8 +71,8 @@ def make_plot(mp, x, y, u, v, **kwargs):
         mp.plot_surface(x,y,mag,cmap="jet")
 
 # Defining the hdf5 file
-mb_num = 26
-skip_num = 2
+mb_num = 29
+skip_num = 1
 my_dpi = 400
 my_fps = 25
 my_file    = "./Output/MB_" + str(mb_num) + ".h5"
@@ -96,7 +96,6 @@ dP_x = np.array(hf["dP_x"])
 dP_y = np.array(hf["dP_y"])
 x = np.array(hf["x"])
 y = np.array(hf["y"])
-
 # Initializing Writer
 # Writer = animation.writers['ffmpeg']
 # writer = Writer(fps=20, metadata=dict(artist='Me'), bitrate=1800)
@@ -119,7 +118,7 @@ def animate(i):
               )
     # M = np.hypot(u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T)
     # my_plot1.quiver(x, y, u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T, M, linewidth=0.1, edgecolor=(0,0,0),cmap="jet")
-    my_plot1.set_title(str(round(t[i],6)))
+    # my_plot1.set_title(str(round(t[i],6)))
 
     # --> PRESSURE GRADIENT FIELD
     my_plot4.clear()
@@ -130,7 +129,8 @@ def animate(i):
               sub_type=[]
               )
 
-    # make_plot(my_plot2, x, y,
+    # my_plot1.clear()
+    # make_plot(my_plot1, x, y,
     #           u[i,1:-1,1:-1].T,
     #           v[i,1:-1,1:-1].T,
     #           plot_type="profile",
