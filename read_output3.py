@@ -11,17 +11,20 @@ import matplotlib.animation as animation
 from mpl_toolkits.mplot3d import Axes3D
 
 
-def make_plot(mp, x, y, u, v, **kwargs):
+def make_plot(fig, mp, x, y, u, v, **kwargs):
     # Handling optional arguments
     LB = kwargs.get("LB",[])
     UB = kwargs.get("UB",[])
     plot_type = kwargs.get("plot_type","profile")
     sub_type = kwargs.get("sub_type",["u","y"])
     show_0 = kwargs.get("show_0","")
+    clear_plot = kwargs.get("clear_plot",True)
+    sl_density = kwargs.get("sl_density",1.0)
 
     # Plotting the velocity profile
     # --> Plotting
-    mp.cla()
+    if clear_plot:
+        mp.cla()
 
     vars = [[],[]]
     if plot_type.lower() == "profile":
@@ -65,44 +68,69 @@ def make_plot(mp, x, y, u, v, **kwargs):
         M = np.hypot(u, v)
         mp.quiver(x,y,u,v,M,linewidth=0.1,edgecolor=(0,0,0),cmap="jet")#,scale_units="xy")
 
+    elif plot_type.lower() == "streamline":
+        X,Y = np.meshgrid(x,y)
+        M = np.hypot(u, v)
+        speed = np.sqrt(u**2 + v**2)
+        # lw = 10 * (speed / speed.max())
+        # mp.streamplot(X,Y, u, v, density=sl_density, color=M, cmap="jet")
+        # print(M.shape)
+        # strm = mp.streamplot(x, y, u, v, linewidth=lw, cmap="jet")
+        strm = mp.streamplot(x, y, u, v, density=sl_density, color=M, cmap="jet")
+        # fig.colorbar(strm.lines)
+        mp.set_xlim([x[0],x[-1]])
+        mp.set_ylim([y[0],y[-1]])
+
     elif plot_type.lower() == "surf":
         x,y = np.meshgrid(x,y)
         mag = (u**2 + v**2)**0.5
         mp.plot_surface(x,y,mag,cmap="jet")
 
-# Defining the hdf5 file
-mb_num = 29
+# --> Defining the hdf5 file reading variables
+mb_num = 5
 skip_num = 1
 my_dpi = 400
 my_fps = 25
-my_file    = "./Output/MB_" + str(mb_num) + ".h5"
-video_name = "./Videos/MB_" + str(mb_num) + ".mp4"
+my_file    = "./Output/testing/run_" + str(mb_num) + ".h5"
+video_name = "./Videos/testing/run_" + str(mb_num) + ".mp4"
+# my_file    = "./Output/MB_" + str(mb_num) + ".h5"
+# video_name = "./Videos/MB_" + str(mb_num) + ".mp4"
 
+# Options to show a video or save a video
 show_fig = True
 save_fig = False
 
-# Importing the h5 file
-hf = h5py.File(my_file, "r")
+# Making sure the file opens
+num_tries = 0
+e = 1
+while e == 1 and num_tries < 10:
+    try:
+        # Importing the h5 file
+        hf = h5py.File(my_file, "r")
+        e = 0
+    except:
+        e = 1
+        num_tries += 1
+        print(num_tries)
+        pass
+
+# Initializing Writer
+# Writer = animation.writers['ffmpeg']
+# writer = Writer(fps=20, metadata=dict(artist='Me'), bitrate=1800)
 
 # Getting all of the object names in the hdf5 file
 data_names = hf.keys()
 
 # Pulling the data
-    # NOTE: the matrices are 3-D pulled in as (t, x, y)
-u = np.array(hf["u"])
-v = np.array(hf["v"])
-t = np.array(hf["t"])
-dP_x = np.array(hf["dP_x"])
-dP_y = np.array(hf["dP_y"])
-x = np.array(hf["x"])
-y = np.array(hf["y"])
-# Initializing Writer
-# Writer = animation.writers['ffmpeg']
-# writer = Writer(fps=20, metadata=dict(artist='Me'), bitrate=1800)
+# NOTE: the matrices are 3-D pulled in as (x, y, t)
+u = hf["u"]
+v = hf["v"]
+t = hf["t"]
+dP_x = hf["dP_x"]
+dP_y = hf["dP_y"]
+x = hf["x"]
+y = hf["y"]
 
-# plt.plot(t,u[:,:,3])
-# plt.show()
-# exit()
 
 fig = plt.figure()
 my_plot1 = fig.add_subplot(2,1,1)#,projection='3d')
@@ -110,33 +138,43 @@ my_plot4 = fig.add_subplot(2,1,2)#,projection='3d')
 # my_plot2 = fig.add_subplot(2,2,3)
 # my_plot3 = fig.add_subplot(2,2,4)
 def animate(i):
+    # Calculating the index
     i = i + (i) * skip_num
     if i >= len(t)-1:
         i = len(t)-1
+    if i <= 5:
+        i = 5
+
+    u_i = u[:,:,i]
+    v_i = v[:,:,i]
+    dP_x_i = dP_x[:,:,i]
+    dP_y_i = dP_y[:,:,i]
     my_plot1.clear()
-    make_plot(my_plot1, x, y,
-              u[:,:,i].T,
-              v[:,:,i].T,
-              plot_type="field",
+    make_plot(fig, my_plot1, x, y,
+              u_i.T,
+              v_i.T,
+              plot_type="streamline",
+              sl_density=[1.0, 0.5],
               sub_type=[]
               )
     # M = np.hypot(u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T)
     # my_plot1.quiver(x, y, u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T, M, linewidth=0.1, edgecolor=(0,0,0),cmap="jet")
-    # my_plot1.set_title(str(round(t[i],6)))
+    my_plot1.set_title(str(round(t[i],6)))
 
     # --> PRESSURE GRADIENT FIELD
     my_plot4.clear()
-    make_plot(my_plot4, x, y,
-              dP_x[i,:,:].T,
-              dP_y[i,:,:].T,
-              plot_type="field",
+    make_plot(fig, my_plot4, x, y,
+              dP_x_i.T,
+              dP_y_i.T,
+              plot_type="streamline",
+              sl_density=[0.9,1.0],
               sub_type=[]
               )
 
-    # my_plot1.clear()
-    # make_plot(my_plot1, x, y,
-    #           u[i,1:-1,1:-1].T,
-    #           v[i,1:-1,1:-1].T,
+    # my_plot4.clear()
+    # make_plot(my_plot4, x, y,
+    #           u[:,:,i].T,
+    #           v[:,:,i].T,
     #           plot_type="profile",
     #           sub_type=["u","y"],
     #           show_0="x"
@@ -151,6 +189,9 @@ def animate(i):
     #           )
     # return u[i,1:-1,1:-1]
 
+# animate(0)
+# plt.show()
+# exit()
 ani = FuncAnimation(fig,animate,frames=(len(t)//skip_num))
 
 if show_fig:

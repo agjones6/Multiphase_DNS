@@ -7,13 +7,6 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-# from mpl_toolkits.mplot3d import Axes3D
-# import keyboard
-# from ipywidgets import Label, HTML, HBox, Image, VBox, Box
-# from ipyevents import Event
-# from IPython.display import display
-# from getkey import getkey, keys
-
 
 # =============================================================================
 #                                 Functions
@@ -178,7 +171,6 @@ u_list = [u]
 v_list = [v]
 t_list = [t]
 
-
 # plt.plot(y_vals, u_list[-1][1:-1,1:-1].T)
 # plt.show()
 # exit()
@@ -260,16 +252,6 @@ while t < T: # and not user_done:
     # Appending values to the lists for storage
     u_list.append(u_new)
     t_list.append(t)
-
-    # key = getkey(blocking=True)
-    # # print(key)
-    # if "a" in key:
-    #     # t = T
-    #     print("break Loop")
-    #     # break
-
-
-
 
 # plt.show()
 

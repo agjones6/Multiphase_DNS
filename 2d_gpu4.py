@@ -25,6 +25,7 @@
 # Importing pachages
 import time
 import numpy as np
+import math
 # import pandas as pd
 import matplotlib.pyplot as plt
 import h5py
@@ -45,10 +46,10 @@ data_type = "float64"
 def dP_x_new_fun(C, dP_x, rho, h, dt, u_ishift_star, v_ishift_star):
     return (1/C[1:-1,1:-1]) * (dP_x[2:,1:-1] + dP_x[:-2,1:-1] + dP_x[1:-1,2:] + dP_x[1:-1,:-2]
                   - (rho * h/dt)*(
-                    (u_ishift_star[2:,1:-1]   + u_ishift_star[1:-1,1:-1])
+                    (u_ishift_star[2:,1:-1] + u_ishift_star[1:-1,1:-1])
                   - (u_ishift_star[1:-1,1:-1] + u_ishift_star[:-2,1:-1])
-                  + (v_ishift_star[2:,1:-1]   + v_ishift_star[1:-1,1:-1])
-                  - (v_ishift_star[2:,:-2]    + v_ishift_star[1:-1,:-2])))
+                  + (v_ishift_star[2:,1:-1] + v_ishift_star[1:-1,1:-1])
+                  - (v_ishift_star[2:,:-2] + v_ishift_star[1:-1,:-2])))
 
 @jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
       nopython=True, target=my_target)
@@ -56,9 +57,9 @@ def dP_y_new_fun(C, dP_y, rho, h, dt, u_ishift_star, v_ishift_star):
     return (1/C[1:-1,1:-1]) * (dP_y[1:-1,2:] + dP_y[1:-1,:-2] + dP_y[2:,1:-1] + dP_y[:-2,1:-1]
                   - (rho * h/dt)*(
                     (v_ishift_star[1:-1,2:]   + v_ishift_star[1:-1,1:-1])
-                  - (v_ishift_star[1:-1,1:-1] + v_ishift_star[1:-1,:-2])
+                  - (v_ishift_star[1:-1,1:-1]     + v_ishift_star[1:-1,:-2])
                   + (u_ishift_star[1:-1,2:]   + u_ishift_star[1:-1,1:-1])
-                  - (u_ishift_star[:-2,2:]    + u_ishift_star[:-2,1:-1]) ))
+                  - (u_ishift_star[:-2,2:] + u_ishift_star[:-2,1:-1])))
 
 @jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
       nopython=True, target=my_target)
@@ -96,13 +97,85 @@ def u_shift_values(vel_star):
 
 # @guvectorize(["void(" + data_type + "[:,:]," + data_type + "[:,:])"],
 #                 "(n,p)->(n,p)", nopython=True, target=my_target)
+# data_type = "float32"
 @jit(["" + data_type + "[:,:](" + data_type + "[:,:])"],
       nopython=True, target=my_target)
-def v_shift_values(vel_star):
+def v_shift_values1(vel_star):
     result = vel_star
     result[1:-1,1:-1] = (1/2) * ( vel_star[1:-1,2:] + vel_star[1:-1,1:-1] )
     return result
 
+# @jit(["" + data_type + "[:,:](" + data_type + "[:,:])"],
+#       nopython=True, target=my_target)
+def v_shift_values3(vel_star):
+    result = vel_star
+    result[1:-1,1:-1] = (1/2) * ( vel_star[1:-1,2:] + vel_star[1:-1,1:-1] )
+    return result
+
+@cuda.jit
+def v_shift_values2(vel_star):
+    # Compute flattened index inside the array
+    row, col = cuda.grid(2)
+    # print(row,col)
+
+    if (row < vel_star.shape[0] - 1) and (col < vel_star.shape[1] - 1):
+        vel_star[row,col] = (1/2) * ( vel_star[row,col + 1] + vel_star[row,col] )
+
+    # vel_star[1:-1,1:-1] = (1/2) * ( vel_star[1:-1,2:] + vel_star[1:-1,1:-1] )
+
+# print(t_arr)
+A_dim, B_dim = 10000, 10000
+t_arr = np.ones((A_dim,B_dim),dtype=np.float64)
+t_arr_global = cuda.to_device(t_arr)
+
+# Testing Speeds
+st2 = time.time()
+threadsperblock = (8,8)
+blockspergrid_x = int(math.ceil(t_arr.shape[0] / threadsperblock[0]))
+blockspergrid_y = int(math.ceil(t_arr.shape[1] / threadsperblock[1]))
+blockspergrid = (blockspergrid_x, blockspergrid_y)
+v_shift_values2[blockspergrid, threadsperblock](t_arr)
+en2 = time.time()
+t2 = en2 - st2
+
+st1 = time.time()
+new_val2 = v_shift_values1(t_arr)
+en1 = time.time()
+t1 = en1 - st1
+
+st3 = time.time()
+new_val3 = v_shift_values3(t_arr)
+en3 = time.time()
+t3 = en3 - st3
+
+print(str("cpu => ").rjust(15), t1)
+print(str("gpu => ").rjust(15), t2)
+print(str("none => ").rjust(15), t3)
+
+print()
+
+st2 = time.time()
+v_shift_values2[blockspergrid, threadsperblock](t_arr_global)
+new_t_arr = t_arr_global.copy_to_host()
+en2 = time.time()
+t2 = en2 - st2
+
+st1 = time.time()
+new_val2 = v_shift_values1(t_arr)
+en1 = time.time()
+t1 = en1 - st1
+
+st3 = time.time()
+new_val3 = v_shift_values3(t_arr)
+en3 = time.time()
+t3 = en3 - st3
+
+print(str("cpu => ").rjust(15), t1)
+print(str("gpu => ").rjust(15), t2)
+print(str("none => ").rjust(15), t3)
+
+# print(t_arr)
+exit()
 @jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + ")"],
       nopython=True, target=my_target)
 def vel_ishift_fun(vel_ishift_star, dt, rho, h, dP, F):
@@ -581,15 +654,15 @@ def calc_C(map):
     x_len, y_len = map.shape
     x_len -= 1
     y_len -= 1
+
     C = np.ones(map.shape)
     for i in range(x_len):
         for j in range(y_len):
             c_bounds = bound_list(map,[i,j])
             my_bool_f = np.array("f" == c_bounds)
             my_bool_p = np.array("p" == c_bounds)
-            my_bool_o = np.array("o" == c_bounds)
-            my_bool_s = np.array(["s" in b for b in c_bounds])
-            C[i,j] = np.sum(my_bool_f) + np.sum(my_bool_p) + np.sum(my_bool_o) + np.sum(my_bool_s)
+            C[i,j] = np.sum(my_bool_f) + np.sum(my_bool_p)
+
     return C
 
 @jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:])"],nopython=True,target=my_target)
@@ -609,10 +682,10 @@ def calc_pressure(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
     x_len -= 1
     y_len -= 1
 
-    tol = 1e-6
+    tol = 1e-4
 
-    dP_x_new = np.ones(dP_x.shape)
-    dP_y_new = np.ones(dP_y.shape)
+    dP_x_new = np.zeros(dP_x.shape)
+    dP_y_new = np.zeros(dP_y.shape)
 
     x_conv = False
     y_conv = False
@@ -660,15 +733,15 @@ u_analytic_mean = np.mean(u_vals)
 # =============================================================================
 #                           Defining Simulation
 # =============================================================================
-pressure_solve = "gradient"
-output_file = "./Output/testing/run_5.h5"
+pressure_solve = "constant_gradient" # "gradient"
+output_file = "./Output/hwk3/N_30_fromPeak.h5"
 show_progress = False
 write_interval = 120
-dt_multiplier = 0.5
+dt_multiplier = 0.75
 
 # Minimum and Maximum Time Step
-dt_max = 0.05
-dt_min = 1e-15
+dt_max = 0.1
+dt_min = 1e-10
 
 # Number of bytes that is allowed to be stored locally
 max_size = 10e6
@@ -678,9 +751,9 @@ elapsed_time = lambda st_t: time.time() - st_t
 
 # Initializing the domain class
 dc = domain_class(N_x=0,
-                  N_y=50,
-                  L_x=0.03,
-                  L_y=0.02,
+                  N_y=30,
+                  L_x=0.02,
+                  L_y=0.01,
                   dt = 5e-6,
                   data_type=data_type
                   # dP_x=dP_analytic THis is not used
@@ -693,33 +766,33 @@ dc.check_dtype()
 # print(dc.h)
 # exit()
 # Setting initial pressure gradient
-dc.dP_x = -0.1
+dc.dP_x = dP_analytic
 dc.dP_y = 0
 
 # Initial Velocities
-dc.u_init = 0.03 #u_analytic_mean
+dc.u_init = u_max # u_analytic_mean
 dc.v_init = 0 #u_analytic_mean
 
 # Setting the time
-dc.T = 10
+dc.T = 120
 dc.N_t = dc.T/dc.dt
 
 dc.top   = "wall"
 dc.bottom = "wall"
-dc.left  = "source"
-dc.right = "source"
+dc.left  = "periodic"
+dc.right = "periodic"
 dc.set_bounds()
 
 # Putting a blockage in the flow
 width = 0.001
-st_x    = int(dc.N_x//4 - (width//dc.h)*0.5)
+st_x    = int(dc.N_x//1.2 - (width//dc.h)*0.5)
 en_x = int(st_x+width//dc.h)
 height = 0.004
 st_y    = 0 #int(dc.N_y//2 - (height//dc.h)*0.5)
 en_y = int(st_y+height//dc.h)
 
 width2 = 0.0015
-st_x2 = int(dc.N_x//4 - ((width+width2)//dc.h)*0.5)
+st_x2 = int(dc.N_x//1.2 - ((width+width2)//dc.h)*0.5)
 en_x2 = int(st_x2+(width2)//dc.h)
 height2 = 0.0005
 st_y2 = int(en_y)
@@ -733,8 +806,8 @@ dc.domain_map[dc.domain_map == "w"] = "w_0"
 # dc.domain_map[:,-1] = "w_1"
 
 # Changing Soure Numbers
-dc.domain_map[dc.domain_map == "s"] = "s_0"
-dc.domain_map[-1,:] = "s_1" # Right
+# dc.domain_map[dc.domain_map == "s"] = "s_0"
+# dc.domain_map[-1,:] = "s_1" # Right
 # dc.domain_map[:,-1] = "s_1" # Top
 
 # wall velocities
@@ -742,10 +815,10 @@ dc.u_B = [0, 0] # 4.69 is the target for
 dc.v_B = [0, 0]
 
 # Source Terms
-dc.u_S    = [0.1, 0]
+dc.u_S    = [0, -0.05]
 dc.v_S    = [0, 0]
-dc.dP_x_S = [0., 0.]
-dc.dP_y_S = [0., 0.]
+dc.dP_x_S = [0, 0]
+dc.dP_y_S = [0, 0]
 
 # Getting a mesh of x and y values
 # dc.x_grid = np.arange(0-dc.h/2,dc.L_x+dc.h/2,dc.h)
