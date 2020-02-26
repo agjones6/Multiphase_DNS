@@ -87,8 +87,8 @@ def make_plot(fig, mp, x, y, u, v, **kwargs):
         mp.plot_surface(x,y,mag,cmap="jet")
 
 # --> Defining the hdf5 file reading variables
-mb_num = 5
-skip_num = 1
+mb_num = 9
+skip_num = 25
 my_dpi = 400
 my_fps = 25
 my_file    = "./Output/testing/run_" + str(mb_num) + ".h5"
@@ -142,34 +142,53 @@ def animate(i):
     i = i + (i) * skip_num
     if i >= len(t)-1:
         i = len(t)-1
-    if i <= 5:
-        i = 5
+    # if i <= 1:
+    #     i = 1
 
     u_i = u[:,:,i]
     v_i = v[:,:,i]
     dP_x_i = dP_x[:,:,i]
     dP_y_i = dP_y[:,:,i]
     my_plot1.clear()
-    make_plot(fig, my_plot1, x, y,
+    try:
+        make_plot(fig, my_plot1, x, y,
               u_i.T,
               v_i.T,
               plot_type="streamline",
               sl_density=[1.0, 0.5],
               sub_type=[]
               )
+    except:
+        pass
     # M = np.hypot(u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T)
     # my_plot1.quiver(x, y, u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T, M, linewidth=0.1, edgecolor=(0,0,0),cmap="jet")
     my_plot1.set_title(str(round(t[i],6)))
 
     # --> PRESSURE GRADIENT FIELD
     my_plot4.clear()
-    make_plot(fig, my_plot4, x, y,
-              dP_x_i.T,
-              dP_y_i.T,
-              plot_type="streamline",
+    try:
+        make_plot(fig, my_plot4, x, y,
+              u_i.T,
+              v_i.T,
+              plot_type="field",
               sl_density=[0.9,1.0],
               sub_type=[]
               )
+    except:
+        pass
+
+    # --> PRESSURE GRADIENT FIELD
+    # my_plot4.clear()
+    # try:
+    #     make_plot(fig, my_plot4, x, y,
+    #           dP_x_i.T,
+    #           dP_y_i.T,
+    #           plot_type="field",
+    #           sl_density=[0.9,1.0],
+    #           sub_type=[]
+    #           )
+    # except:
+    #     pass
 
     # my_plot4.clear()
     # make_plot(my_plot4, x, y,
@@ -189,7 +208,7 @@ def animate(i):
     #           )
     # return u[i,1:-1,1:-1]
 
-# animate(0)
+# animate(1)
 # plt.show()
 # exit()
 ani = FuncAnimation(fig,animate,frames=(len(t)//skip_num))

@@ -45,20 +45,20 @@ data_type = "float64"
 def dP_x_new_fun(C, dP_x, rho, h, dt, u_ishift_star, v_ishift_star):
     return (1/C[1:-1,1:-1]) * (dP_x[2:,1:-1] + dP_x[:-2,1:-1] + dP_x[1:-1,2:] + dP_x[1:-1,:-2]
                   - (rho * h/dt)*(
-                    (u_ishift_star[2:,1:-1]   + u_ishift_star[1:-1,1:-1])
-                  - (u_ishift_star[1:-1,1:-1] + u_ishift_star[:-2,1:-1])
-                  + (v_ishift_star[2:,1:-1]   + v_ishift_star[1:-1,1:-1])
-                  - (v_ishift_star[2:,:-2]    + v_ishift_star[1:-1,:-2])))
+                    (u_ishift_star[2:,1:-1]   - u_ishift_star[1:-1,1:-1])
+                  - (u_ishift_star[1:-1,1:-1] - u_ishift_star[:-2,1:-1])
+                  + (v_ishift_star[2:,1:-1]   - v_ishift_star[1:-1,1:-1])
+                  - (v_ishift_star[2:,:-2]    - v_ishift_star[1:-1,:-2])))
 
 @jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
       nopython=True, target=my_target)
 def dP_y_new_fun(C, dP_y, rho, h, dt, u_ishift_star, v_ishift_star):
     return (1/C[1:-1,1:-1]) * (dP_y[1:-1,2:] + dP_y[1:-1,:-2] + dP_y[2:,1:-1] + dP_y[:-2,1:-1]
                   - (rho * h/dt)*(
-                    (v_ishift_star[1:-1,2:]   + v_ishift_star[1:-1,1:-1])
-                  - (v_ishift_star[1:-1,1:-1] + v_ishift_star[1:-1,:-2])
-                  + (u_ishift_star[1:-1,2:]   + u_ishift_star[1:-1,1:-1])
-                  - (u_ishift_star[:-2,2:]    + u_ishift_star[:-2,1:-1]) ))
+                    (v_ishift_star[1:-1,2:]   - v_ishift_star[1:-1,1:-1])
+                  - (v_ishift_star[1:-1,1:-1] - v_ishift_star[1:-1,:-2])
+                  + (u_ishift_star[1:-1,2:]   - u_ishift_star[1:-1,1:-1])
+                  - (u_ishift_star[:-2,2:]    - u_ishift_star[:-2,1:-1]) ))
 
 @jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
       nopython=True, target=my_target)
@@ -90,7 +90,8 @@ def vel_star(vel, dt, A, nu, D):
 @jit(["" + data_type + "[:,:](" + data_type + "[:,:])"],
       nopython=True, target=my_target)
 def u_shift_values(vel_star):
-    result = vel_star
+    # result = vel_star
+    result = np.zeros(vel_star.shape)
     result[1:-1,1:-1] = (1/2) * ( vel_star[2:,1:-1] + vel_star[1:-1,1:-1] )
     return result
 
@@ -99,7 +100,8 @@ def u_shift_values(vel_star):
 @jit(["" + data_type + "[:,:](" + data_type + "[:,:])"],
       nopython=True, target=my_target)
 def v_shift_values(vel_star):
-    result = vel_star
+    # result = vel_star
+    result = np.zeros(vel_star.shape)
     result[1:-1,1:-1] = (1/2) * ( vel_star[1:-1,2:] + vel_star[1:-1,1:-1] )
     return result
 
@@ -254,6 +256,9 @@ def set_ghost(map, u, u_B=0, **kwargs):
         bound_type = 1
         pass
 
+    # Setting an original value matrix
+    u0 = u
+
     # Checking to make sure the velocity array passed in is 2D
     if len(u.shape) == 2:
         num_i, num_j = u.shape
@@ -269,8 +274,8 @@ def set_ghost(map, u, u_B=0, **kwargs):
         x_max,y_max = map.shape
         x_min,y_min = 0,0
 
-        x_max = x_max - 1
-        y_max = y_max - 1
+        x_max -= 1
+        y_max -= 1
 
         top_i = (x,y+1)
         bot_i = (x,y-1)
@@ -302,7 +307,16 @@ def set_ghost(map, u, u_B=0, **kwargs):
             final_index = index_array[bound_array=="f"][0]
             final_index = (final_index[0]+(final_index[0]-x)*adj,final_index[1]+(final_index[1]-y)*adj)
         except:
-            final_index = (x,y)
+            try:
+                # This is for the corners
+                # print(x,y,bound_array)
+                final_index = [("w" not in b and "" != b) for b in bound_array]
+                final_index = index_array[final_index][0]
+                final_index = (final_index[0]+(final_index[0]-x)*adj,final_index[1]+(final_index[1]-y)*adj)
+                # print(final_index)
+            except:
+                # print("didnt Work")
+                final_index = (x,y)
 
         return final_index
 
@@ -310,6 +324,7 @@ def set_ghost(map, u, u_B=0, **kwargs):
         for j in range(len(map[0,:])):
             # Getting the current cell type
             cm = map[i,j]
+            # print(i,j)
 
             # Setting the wall ghost cells
             if "w" in cm:
@@ -321,23 +336,23 @@ def set_ghost(map, u, u_B=0, **kwargs):
                     f_ind = find_fluid(map,[i,j])
 
                     # Using the fluid index to set the ghost cell value
-                    if (i,j) == f_ind:
-                        # This is for the unused corners of the domain
-                        u[i,j] = 0
-                    else:
-                        # Checking to see if there are different walls
-                        if len(cm.split("_")) > 1:
-                            w_type = cm.split("_")[1]
-                            w_type = int(w_type)
-                            if len(u_B) != 0:
-                                u[i,j] = 2*u_B[w_type] - u[f_ind]
-                            else:
-                                u[i,j] = 2*u_B - u[f_ind]
+                    # if (i,j) == f_ind:
+                    #     # This is for the unused corners of the domain
+                    #     u[i,j] = 0
+                    # else:
+                    # Checking to see if there are different walls
+                    if len(cm.split("_")) > 1:
+                        w_type = cm.split("_")[1]
+                        w_type = int(w_type)
+                        if len(u_B) != 0:
+                            u[i,j] = 2*u_B[w_type] - u0[f_ind]
                         else:
-                            if len(u_B) != 0:
-                                u[i,j] = 2*u_B[0] - u[f_ind]
-                            else:
-                                u[i,j] = 2*u_B - u[f_ind]
+                            u[i,j] = 2*u_B - u0[f_ind]
+                    else:
+                        if len(u_B) != 0:
+                            u[i,j] = 2*u_B[0] - u0[f_ind]
+                        else:
+                            u[i,j] = 2*u_B - u0[f_ind]
 
             # Setting periodic Boundaries
             elif "p" in cm:
@@ -353,7 +368,7 @@ def set_ghost(map, u, u_B=0, **kwargs):
                 if y_i < 0:
                     y_i = y_i + num_j
 
-                u[i,j] = u[x_i,y_i]
+                u[i,j] = u0[x_i,y_i]
 
             # Setting Outflow Boundaries
             elif "o" in cm:
@@ -361,7 +376,7 @@ def set_ghost(map, u, u_B=0, **kwargs):
                 f_ind = find_fluid(map,[i,j])
                 x_i,y_i = f_ind
                 # print(cm, (i,j), "-->", f_ind)
-                u[i,j] = u[x_i,y_i]
+                u[i,j] = u0[x_i,y_i]
 
             # Setting the source term ghost cells
             elif "s" in cm:
@@ -558,12 +573,12 @@ def bound_list(map,loc,**kwargs):
     else:
         top = ""
 
-    if y > y_min:
+    if y >= y_min:
         bottom = map[bot_i]
     else:
         bottom = ""
 
-    if x > x_min:
+    if x >= x_min:
         left = map[left_i]
     else:
         left = ""
@@ -579,8 +594,8 @@ def bound_list(map,loc,**kwargs):
 
 def calc_C(map):
     x_len, y_len = map.shape
-    x_len -= 1
-    y_len -= 1
+    # x_len -= 1
+    # y_len -= 1
     C = np.ones(map.shape)
     for i in range(x_len):
         for j in range(y_len):
@@ -611,8 +626,8 @@ def calc_pressure(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
 
     tol = 1e-6
 
-    dP_x_new = np.ones(dP_x.shape)
-    dP_y_new = np.ones(dP_y.shape)
+    dP_x_new = dP_x
+    dP_y_new = dP_y
 
     x_conv = False
     y_conv = False
@@ -626,8 +641,8 @@ def calc_pressure(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
             dP_y_new[1:-1,1:-1] = dP_y_new_fun(dc.C, dP_y, dc.rho, dc.h, dc.dt, u_ishift_star, v_ishift_star)
 
         # Checking if the current time step converges with the new step
-        x_conv = check_conv(dP_x, dP_x_new, tol)
-        y_conv = check_conv(dP_y, dP_y_new, tol)
+        x_conv = check_conv(dP_x[1:-1,1:-1], dP_x_new[1:-1,1:-1], tol)
+        y_conv = check_conv(dP_y[1:-1,1:-1], dP_y_new[1:-1,1:-1], tol)
 
         if not x_conv:
             dP_x = dP_x_new
@@ -661,14 +676,14 @@ u_analytic_mean = np.mean(u_vals)
 #                           Defining Simulation
 # =============================================================================
 pressure_solve = "gradient"
-output_file = "./Output/testing/run_5.h5"
+output_file = "./Output/testing/run_9.h5"
 show_progress = False
 write_interval = 120
 dt_multiplier = 0.5
 
 # Minimum and Maximum Time Step
 dt_max = 0.05
-dt_min = 1e-15
+dt_min = 1e-30
 
 # Number of bytes that is allowed to be stored locally
 max_size = 10e6
@@ -678,9 +693,9 @@ elapsed_time = lambda st_t: time.time() - st_t
 
 # Initializing the domain class
 dc = domain_class(N_x=0,
-                  N_y=50,
+                  N_y=120,
                   L_x=0.03,
-                  L_y=0.02,
+                  L_y=0.03,
                   dt = 5e-6,
                   data_type=data_type
                   # dP_x=dP_analytic THis is not used
@@ -693,15 +708,15 @@ dc.check_dtype()
 # print(dc.h)
 # exit()
 # Setting initial pressure gradient
-dc.dP_x = -0.1
-dc.dP_y = 0
+dc.dP_x = 0.
+dc.dP_y = 0.
 
 # Initial Velocities
-dc.u_init = 0.03 #u_analytic_mean
+dc.u_init = 0 #0.03 #u_analytic_mean
 dc.v_init = 0 #u_analytic_mean
 
 # Setting the time
-dc.T = 10
+dc.T = 20
 dc.N_t = dc.T/dc.dt
 
 dc.top   = "wall"
@@ -709,12 +724,14 @@ dc.bottom = "wall"
 dc.left  = "source"
 dc.right = "source"
 dc.set_bounds()
-
+# print(dc.C.T)
+# print(dc.domain_map.T)
+# exit()
 # Putting a blockage in the flow
-width = 0.001
+width = 0.003
 st_x    = int(dc.N_x//4 - (width//dc.h)*0.5)
 en_x = int(st_x+width//dc.h)
-height = 0.004
+height = 0.006
 st_y    = 0 #int(dc.N_y//2 - (height//dc.h)*0.5)
 en_y = int(st_y+height//dc.h)
 
@@ -725,8 +742,8 @@ height2 = 0.0005
 st_y2 = int(en_y)
 en_y2 = int(st_y+(height+height2)//dc.h)
 
-# dc.domain_map[st_x:en_x,st_y:en_y] = "w"
-# dc.domain_map[st_x2:en_x2,st_y2:en_y2] = "w"
+dc.domain_map[st_x:en_x,st_y:en_y] = "w"
+dc.domain_map[st_x2:en_x2,st_y2:en_y2] = "w"
 
 # Changing the wall numbers
 dc.domain_map[dc.domain_map == "w"] = "w_0"
@@ -738,13 +755,13 @@ dc.domain_map[-1,:] = "s_1" # Right
 # dc.domain_map[:,-1] = "s_1" # Top
 
 # wall velocities
-dc.u_B = [0, 0] # 4.69 is the target for
+dc.u_B = [2.5, 0] # 4.69 is the target for
 dc.v_B = [0, 0]
 
 # Source Terms
-dc.u_S    = [0.1, 0]
+dc.u_S    = [0, 0]
 dc.v_S    = [0, 0]
-dc.dP_x_S = [0., 0.]
+dc.dP_x_S = [0. , 0]
 dc.dP_y_S = [0., 0.]
 
 # Getting a mesh of x and y values
@@ -754,7 +771,7 @@ dc.dP_y_S = [0., 0.]
 # Showing a picture of the domain if desired
 show_my_domain = False
 if show_my_domain:
-    print(dc.domain_map)
+    print(dc.domain_map.T)
     # print(np.flip(dc.domain_map).T)
     # print(dc.domain_map.T)
     # plt.figure()
@@ -896,20 +913,26 @@ while t < dc.T: # and not user_done:
 
     # Calculating the new pressures if it is desired
     if pressure_solve == "gradient":
+        # dP_x = set_ghost(dc.domain_map,dP_x, dc.u_B, type="pressure",source=dc.dP_x_S)
+        # dP_y = set_ghost(dc.domain_map,dP_y, dc.u_B, type="pressure",source=dc.dP_y_S)
+
         dP_x, dP_y = calc_pressure(dc, dP_x, dP_y, u_ishift_star, v_ishift_star)
         dP_x = set_ghost(dc.domain_map,dP_x, dc.u_B, type="pressure",source=dc.dP_x_S)
         dP_y = set_ghost(dc.domain_map,dP_y, dc.u_B, type="pressure",source=dc.dP_y_S)
+        # dP_x[:,:] = 0
     elif pressure_solve == "constant_gradient":
         dP_x = fc.dP_x
         dP_y = fc.dP_y
+
+    # print(dP_x[:,-2])
 
     # Calculating the new time velocities
     u_ishift = vel_ishift_fun(u_ishift_star, dc.dt, rho, dc.h, dP_x, dc.F_x)
     v_ishift = vel_ishift_fun(v_ishift_star, dc.dt, rho, dc.h, dP_y, dc.F_y)
 
     # Applying boundaries to the shifted velocities
-    u_ishift = set_ghost(dc.domain_map,u_ishift,dc.u_B,source=dc.u_S)
-    v_ishift = set_ghost(dc.domain_map,v_ishift,dc.v_B,source=dc.v_S)
+    # u_ishift = set_ghost(dc.domain_map,u_ishift,dc.u_B,source=dc.u_S)
+    # v_ishift = set_ghost(dc.domain_map,v_ishift,dc.v_B,source=dc.v_S)
 
     # Getting the unshifted values back out
     u[1:-1,1:-1] = u_new_fun(u_ishift)
