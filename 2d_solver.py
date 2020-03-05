@@ -326,13 +326,15 @@ def set_ghost(map, u, u_B=0, **kwargs):
             cm = map[i,j]
             # print(i,j)
 
-            # Setting the wall ghost cells
-            if "w" in cm:
-                if type.lower() == "pressure":
-                    # Pressure gradient in the wall will always be 0
-                        # NOTE THIS MAY NEED TO CHANGE
+            if type.lower() == "pressure":
+                # Pressure gradient in the wall will always be 0
+                # NOTE THIS MAY NEED TO CHANGE
+                if not "f" in cm:
                     u[i,j] = 0
-                else:
+
+            else:
+                # Setting the wall ghost cells
+                if "w" in cm:
                     f_ind = find_fluid(map,[i,j])
 
                     # Using the fluid index to set the ghost cell value
@@ -354,32 +356,32 @@ def set_ghost(map, u, u_B=0, **kwargs):
                         else:
                             u[i,j] = 2*u_B - u0[f_ind]
 
-            # Setting periodic Boundaries
-            elif "p" in cm:
-                f_ind = find_fluid(map,[i,j],adj=-2)
-                x_i,y_i = f_ind
-                if x_i > num_i:
-                    x_i = x_i-num_i
-                if y_i > num_j:
-                    y_i = y_i-num_j
-                    # print(f_ind[0]-num_i)
-                if x_i < 0:
-                    x_i = x_i + num_i
-                if y_i < 0:
-                    y_i = y_i + num_j
+                # Setting Outflow Boundaries
+                elif "o" in cm:
+                    # The Property on the boundary is equal to the fluid near the boundary
+                    f_ind = find_fluid(map,[i,j])
+                    x_i,y_i = f_ind
+                    # print(cm, (i,j), "-->", f_ind)
+                    u[i,j] = u0[x_i,y_i]
 
-                u[i,j] = u0[x_i,y_i]
+                # Setting periodic Boundaries
+                elif "p" in cm:
+                    f_ind = find_fluid(map,[i,j],adj=-2)
+                    x_i,y_i = f_ind
+                    if x_i > num_i:
+                        x_i = x_i-num_i
+                    if y_i > num_j:
+                        y_i = y_i-num_j
+                        # print(f_ind[0]-num_i)
+                    if x_i < 0:
+                        x_i = x_i + num_i
+                    if y_i < 0:
+                        y_i = y_i + num_j
 
-            # Setting Outflow Boundaries
-            elif "o" in cm:
-                # The Property on the boundary is equal to the fluid near the boundary
-                f_ind = find_fluid(map,[i,j])
-                x_i,y_i = f_ind
-                # print(cm, (i,j), "-->", f_ind)
-                u[i,j] = u0[x_i,y_i]
+                    u[i,j] = u0[x_i,y_i]
 
             # Setting the source term ghost cells
-            elif "s" in cm:
+            if "s" in cm:
                 # Checking to see if there are more than one source terms
                 if len(cm.split("_")) > 1:
                     s_type = cm.split("_")[1]
@@ -393,6 +395,7 @@ def set_ghost(map, u, u_B=0, **kwargs):
                         u[i,j] = source[0]
                     else:
                         u[i,j] = source
+
     return u
 
 class domain_class:
@@ -602,9 +605,9 @@ def calc_C(map):
             c_bounds = bound_list(map,[i,j])
             my_bool_f = np.array("f" == c_bounds)
             my_bool_p = np.array("p" == c_bounds)
-            my_bool_o = np.array("o" == c_bounds)
-            my_bool_s = np.array(["s" in b for b in c_bounds])
-            C[i,j] = np.sum(my_bool_f) + np.sum(my_bool_p) + np.sum(my_bool_o) + np.sum(my_bool_s)
+            # my_bool_o = np.array("o" == c_bounds)
+            # my_bool_s = np.array(["s" in b for b in c_bounds])
+            C[i,j] = np.sum(my_bool_f)  #+ np.sum(my_bool_p) # + np.sum(my_bool_o) + np.sum(my_bool_s)
     return C
 
 @jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:])"],nopython=True,target=my_target)
@@ -675,8 +678,8 @@ u_analytic_mean = np.mean(u_vals)
 # =============================================================================
 #                           Defining Simulation
 # =============================================================================
-pressure_solve = "constant_gradient"
-output_file = "./Output/testing/run_10.h5"
+pressure_solve = "gradient"
+output_file = "./Output/testing/run_15.h5"
 show_progress = False
 write_interval = 120
 dt_multiplier = 0.5
@@ -692,9 +695,9 @@ real_start_time = time.time()
 elapsed_time = lambda st_t: time.time() - st_t
 
 # Initializing the domain class
-dc = domain_class(N_x=0,
-                  N_y=50,
-                  L_x=0.03,
+dc = domain_class(N_x=50,
+                  N_y=0,
+                  L_x=0.12,
                   L_y=0.02,
                   dt = 5e-6,
                   data_type=data_type
@@ -708,11 +711,11 @@ dc.check_dtype()
 # print(dc.h)
 # exit()
 # Setting initial pressure gradient
-dc.dP_x = -2.0
-dc.dP_y = -1.0
+dc.dP_x = 0.0
+dc.dP_y = 0.0
 
 # Initial Velocities
-dc.u_init = 0.0 #0.03 #u_analytic_mean
+dc.u_init = 0.1 #0.03 #u_analytic_mean
 dc.v_init = 0 #u_analytic_mean
 
 # Setting the time
@@ -721,8 +724,8 @@ dc.N_t = dc.T/dc.dt
 
 dc.top   = "wall"
 dc.bottom = "wall"
-dc.left  = "periodic"
-dc.right = "periodic"
+dc.left  = "outflow"
+dc.right = "outflow"
 dc.set_bounds()
 # print(dc.C.T)
 # print(dc.domain_map.T)
@@ -759,7 +762,7 @@ dc.u_B = [0, 0] # 4.69 is the target for
 dc.v_B = [0, 0]
 
 # Source Terms
-dc.u_S    = [0, 0]
+dc.u_S    = [0.1, 0]
 dc.v_S    = [0, 0]
 dc.dP_x_S = [0. , 0]
 dc.dP_y_S = [0., 0.]
@@ -790,6 +793,7 @@ v = fc.v
 t = fc.t
 dP_x = fc.dP_x
 dP_y = fc.dP_y
+
 
 # %% Applying the boundary conditions
 if dc.data_type == "float64":
@@ -904,12 +908,15 @@ while t < dc.T: # and not user_done:
     v_star = vel_star(v, dc.dt, A_y, nu, D_y) #v + dc.dt * ( -A_y + nu * D_y )
 
     # Doing the boundaries on the star velocities
-    u_star = set_ghost(dc.domain_map, u_star, dc.u_B, source=dc.u_S)
-    v_star = set_ghost(dc.domain_map, v_star, dc.v_B, source=dc.v_S)
+    # u_star = set_ghost(dc.domain_map, u_star, dc.u_B, source=dc.u_S)
+    # v_star = set_ghost(dc.domain_map, v_star, dc.v_B, source=dc.v_S)
 
     # Shifting the velocitiy values
     u_ishift_star = u_shift_values(u_star)
     v_ishift_star = v_shift_values(v_star)
+
+    u_ishift_star = set_ghost(dc.domain_map, u_ishift_star, dc.u_B, source=dc.u_S)
+    v_ishift_star = set_ghost(dc.domain_map, v_ishift_star, dc.v_B, source=dc.v_S)
 
     # Calculating the new pressures if it is desired
     if pressure_solve == "gradient":
@@ -931,8 +938,8 @@ while t < dc.T: # and not user_done:
     v_ishift = vel_ishift_fun(v_ishift_star, dc.dt, rho, dc.h, dP_y, dc.F_y)
 
     # Applying boundaries to the shifted velocities
-    # u_ishift = set_ghost(dc.domain_map,u_ishift,dc.u_B,source=dc.u_S)
-    # v_ishift = set_ghost(dc.domain_map,v_ishift,dc.v_B,source=dc.v_S)
+    u_ishift = set_ghost(dc.domain_map,u_ishift,dc.u_B,source=dc.u_S)
+    v_ishift = set_ghost(dc.domain_map,v_ishift,dc.v_B,source=dc.v_S)
 
     # Getting the unshifted values back out
     u[1:-1,1:-1] = u_new_fun(u_ishift)

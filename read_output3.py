@@ -87,8 +87,8 @@ def make_plot(fig, mp, x, y, u, v, **kwargs):
         mp.plot_surface(x,y,mag,cmap="jet")
 
 # --> Defining the hdf5 file reading variables
-mb_num = 9
-skip_num = 25
+mb_num = 15
+skip_num = 5
 my_dpi = 400
 my_fps = 25
 my_file    = "./Output/testing/run_" + str(mb_num) + ".h5"
@@ -137,9 +137,11 @@ my_plot1 = fig.add_subplot(2,1,1)#,projection='3d')
 my_plot4 = fig.add_subplot(2,1,2)#,projection='3d')
 # my_plot2 = fig.add_subplot(2,2,3)
 # my_plot3 = fig.add_subplot(2,2,4)
+i_start = len(t)//1
+i_start = 0
 def animate(i):
     # Calculating the index
-    i = i + (i) * skip_num
+    i = i + (i) * skip_num + i_start
     if i >= len(t)-1:
         i = len(t)-1
     # if i <= 1:
