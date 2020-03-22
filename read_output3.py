@@ -86,13 +86,18 @@ def make_plot(fig, mp, x, y, u, v, **kwargs):
         mag = (u**2 + v**2)**0.5
         mp.plot_surface(x,y,mag,cmap="jet")
 
+    elif plot_type.lower() == "contourf":
+
+        mag = (u**2 + v**2)**0.5
+        mp.contourf(x,y,mag)
+
 # --> Defining the hdf5 file reading variables
-mb_num = 15
-skip_num = 5
+mb_num = 27
+skip_num = 1
 my_dpi = 400
 my_fps = 25
-my_file    = "./Output/testing/run_" + str(mb_num) + ".h5"
-video_name = "./Videos/testing/run_" + str(mb_num) + ".mp4"
+my_file    = "./Output/hwk4/run_" + str(mb_num) + ".h5"
+video_name = "./Videos/hwk4/run_" + str(mb_num) + ".mp4"
 # my_file    = "./Output/MB_" + str(mb_num) + ".h5"
 # video_name = "./Videos/MB_" + str(mb_num) + ".mp4"
 
@@ -128,17 +133,25 @@ v = hf["v"]
 t = hf["t"]
 dP_x = hf["dP_x"]
 dP_y = hf["dP_y"]
+P = hf["P"]
 x = hf["x"]
 y = hf["y"]
 
+# Choosing the starting index
+i_start = len(t)//2
+i_start = 0
+
+# Plotting a specific x location of u Velocity at a ceratin time
+# plt.figure()
+# plt.plot(u[:,:,1].T,y)
+# plt.show()
+# exit()
 
 fig = plt.figure()
 my_plot1 = fig.add_subplot(2,1,1)#,projection='3d')
 my_plot4 = fig.add_subplot(2,1,2)#,projection='3d')
 # my_plot2 = fig.add_subplot(2,2,3)
 # my_plot3 = fig.add_subplot(2,2,4)
-i_start = len(t)//1
-i_start = 0
 def animate(i):
     # Calculating the index
     i = i + (i) * skip_num + i_start
@@ -147,16 +160,23 @@ def animate(i):
     # if i <= 1:
     #     i = 1
 
-    u_i = u[:,:,i]
-    v_i = v[:,:,i]
+    u_i = u[:,:,i]#/np.max(u[:,:,i])
+    v_i = v[:,:,i]#/np.max(v[:,:,i])
     dP_x_i = dP_x[:,:,i]
     dP_y_i = dP_y[:,:,i]
+    max_P = np.amax(P[:,:,i])
+    # print(max_P)
+    if max_P != 0:
+        P_i = P[:,:,i]/max_P
+    else:
+        P_i = P[:,:,i]
+
     my_plot1.clear()
     try:
         make_plot(fig, my_plot1, x, y,
               u_i.T,
               v_i.T,
-              plot_type="streamline",
+              plot_type="field",
               sl_density=[1.0, 0.5],
               sub_type=[]
               )
@@ -170,13 +190,15 @@ def animate(i):
     my_plot4.clear()
     try:
         make_plot(fig, my_plot4, x, y,
-              u_i.T,
-              v_i.T,
-              plot_type="field",
+              P_i.T,
+              P_i.T,
+              plot_type="contourf",
               sl_density=[0.9,1.0],
               sub_type=[]
               )
-    except:
+    except Exception as e:
+        print(e)
+        exit()
         pass
 
     # --> PRESSURE GRADIENT FIELD

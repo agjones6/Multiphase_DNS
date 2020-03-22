@@ -39,7 +39,7 @@ from numba import jit, cuda, vectorize, float64, float32, guvectorize
 # =============================================================================
 my_target = "cpu"
 data_type = "float64"
-
+# (i+1) = 2:, (i-1) = :-2, i = 1:-1
 @jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
       nopython=True, target=my_target)
 def dP_x_new_fun(C, dP_x, rho, h, dt, u_ishift_star, v_ishift_star):
@@ -60,19 +60,28 @@ def dP_y_new_fun(C, dP_y, rho, h, dt, u_ishift_star, v_ishift_star):
                   + (u_ishift_star[1:-1,2:]   - u_ishift_star[1:-1,1:-1])
                   - (u_ishift_star[:-2,2:]    - u_ishift_star[:-2,1:-1]) ))
 
+# Absolute pressure calculation
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
+      nopython=True, target=my_target)
+def P_new_fun(C, P, rho, h, dt, u_ishift_star, v_ishift_star):
+    return (1/C[1:-1,1:-1]) * (P[2:,1:-1] + P[:-2,1:-1] + P[1:-1,2:] + P[1:-1,:-2]
+                  - (rho * h/dt)*(
+                    (u_ishift_star[1:-1,1:-1] - u_ishift_star[:-2,1:-1])
+                  + (v_ishift_star[1:-1,1:-1] - v_ishift_star[1:-1,:-2]) ))
+
 @jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
       nopython=True, target=my_target)
 def A_x_fun(h,u,v): # (i+1) = 2:, (i-1) = :-2, i = 1:-1
     return ((1.0/(4.0*h)) * ( (u[2:,1:-1] + u[1:-1,1:-1])**2.0 - (u[:-2,1:-1] + u[1:-1,1:-1])**2.0
-                           + (u[1:-1,2:] + u[1:-1,1:-1]) * (1.0/4.0)*((v[1:-1,1:-1]+v[1:-1,2:]+v[2:,1:-1]+v[2:,2:]) + (v[1:-1,1:-1]+v[1:-1,2:]+v[:-2,1:-1]+v[:-2,2:]))
-                           - (u[1:-1,1:-1] + u[1:-1,:-2]) * (1.0/4.0)*((v[1:-1,1:-1]+v[1:-1,:-2]+v[2:,1:-1]+v[2:,:-2]) + (v[1:-1,1:-1]+v[1:-1,:-2]+v[:-2,1:-1]+v[:-2,:-2])) ))
+                           + (u[1:-1,2:] + u[1:-1,1:-1]) * (1.0/4.0)*((v[1:-1,1:-1]+v[1:-1,2:]+v[2:,1:-1]+v[2:,2:])) #  + (v[1:-1,1:-1]+v[1:-1,2:]+v[:-2,1:-1]+v[:-2,2:])
+                           - (u[1:-1,1:-1] + u[1:-1,:-2]) * (1.0/4.0)*((v[1:-1,1:-1]+v[1:-1,:-2]+v[2:,1:-1]+v[2:,:-2]) ) )) #+ (v[1:-1,1:-1]+v[1:-1,:-2]+v[:-2,1:-1]+v[:-2,:-2])
 
 @jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
       nopython=True, target=my_target)
 def A_y_fun(h,u,v):
     return (1.0/(4.0*h)) * ( (v[1:-1,2:] + v[1:-1,1:-1])**2.0 - (v[1:-1,:-2] + v[1:-1,1:-1])**2.0
-                          + (v[2:,1:-1] + v[1:-1,1:-1]) * (1.0/4.0)*((u[1:-1,1:-1]+u[1:-1,2: ]+u[2:,1:-1]+u[2:,2:]) + (u[1:-1,1:-1]+u[1:-1,2:]+u[:-2,1:-1]+u[:-2,2:]))
-                          - (v[1:-1,1:-1] + v[:-2,1:-1]) * (1.0/4.0)*((u[1:-1,1:-1]+u[1:-1,:-2]+u[2:,1:-1]+u[2:,:-2]) + (u[1:-1,1:-1]+u[1:-1,:-2]+u[:-2,1:-1]+u[:-2,:-2])) )
+                          + (v[2:,1:-1] + v[1:-1,1:-1]) * (1.0/4.0)*((u[1:-1,1:-1]+u[1:-1,2: ]+u[2:,1:-1]+u[2:,2:]) ) #+ (u[1:-1,1:-1]+u[1:-1,2:]+u[:-2,1:-1]+u[:-2,2:])
+                          - (v[1:-1,1:-1] + v[:-2,1:-1]) * (1.0/4.0)*((u[1:-1,1:-1]+u[1:-1,:-2]+u[2:,1:-1]+u[2:,:-2]) ) ) #+ (u[1:-1,1:-1]+u[1:-1,:-2]+u[:-2,1:-1]+u[:-2,:-2])
 
 @jit(["" + data_type + "[:,:](" + data_type + "," + data_type + "[:,:])"],
       nopython=True, target=my_target)
@@ -108,7 +117,7 @@ def v_shift_values(vel_star):
 @jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + ")"],
       nopython=True, target=my_target)
 def vel_ishift_fun(vel_ishift_star, dt, rho, h, dP, F):
-    return vel_ishift_star - (dt/(rho*h)) * dP * h + F
+    return vel_ishift_star - (dt/(rho*h)) * dP * h + F # I took the h out of dP
 
 @jit(["" + data_type + "[:,:](" + data_type + "[:,:])"],
       nopython=True, target=my_target)
@@ -247,6 +256,7 @@ def set_ghost(map, u, u_B=0, **kwargs):
 
     type = kwargs.get("type","velocity")
     source = kwargs.get("source",0)
+    h = kwargs.get("h",1)
 
     bound_type = 1
     try:
@@ -329,9 +339,31 @@ def set_ghost(map, u, u_B=0, **kwargs):
             if type.lower() == "pressure":
                 # Pressure gradient in the wall will always be 0
                 # NOTE THIS MAY NEED TO CHANGE
-                if not "f" in cm:
-                    u[i,j] = 0
 
+                # Setting periodic Boundaries
+                if "p" in cm:
+                    # f_ind1 = find_fluid(map,[i,j],adj=1)
+                    # f_ind2 = find_fluid(map,[i,j])
+                    # u[i,j] = (u0[f_ind1] - u0[f_ind2])*h + u0[f_ind2]
+
+                    f_ind = find_fluid(map,[i,j],adj=-2)
+                    x_i,y_i = f_ind
+                    if x_i > num_i:
+                        x_i = x_i-num_i
+                    if y_i > num_j:
+                        y_i = y_i-num_j
+                        # print(f_ind[0]-num_i)
+                    if x_i < 0:
+                        x_i = x_i + num_i
+                    if y_i < 0:
+                        y_i = y_i + num_j
+
+                    u[i,j] = u0[x_i,y_i]
+
+                elif not "f" in cm:
+                    u[i,j] = 0
+                # if not "f" in cm:
+                #     u[i,j] = 0
             else:
                 # Setting the wall ghost cells
                 if "w" in cm:
@@ -358,11 +390,16 @@ def set_ghost(map, u, u_B=0, **kwargs):
 
                 # Setting Outflow Boundaries
                 elif "o" in cm:
+                    # --> Simple approach where the ghost cell equals the nearest fluid value
                     # The Property on the boundary is equal to the fluid near the boundary
-                    f_ind = find_fluid(map,[i,j])
-                    x_i,y_i = f_ind
-                    # print(cm, (i,j), "-->", f_ind)
-                    u[i,j] = u0[x_i,y_i]
+                    # f_ind = find_fluid(map,[i,j])
+                    # x_i,y_i = f_ind
+                    # u[i,j] = u0[x_i,y_i]
+
+                    # --> Linear Extrapolation approach
+                    f_ind1 = find_fluid(map,[i,j],adj=1)
+                    f_ind2 = find_fluid(map,[i,j])
+                    u[i,j] = (u0[f_ind1] - u0[f_ind2])*h + u0[f_ind2]
 
                 # Setting periodic Boundaries
                 elif "p" in cm:
@@ -388,6 +425,8 @@ def set_ghost(map, u, u_B=0, **kwargs):
                     s_type = int(s_type)
                     if len(source) != 0:
                         u[i,j] = source[s_type]
+                        # if type.lower() == "pressure":
+                        #     print(i,j, source[s_type])
                     else:
                         u[i,j] = source
                 else:
@@ -536,9 +575,13 @@ class flow_class:
         self.dP_x = np.zeros((dc.N_x + 2, dc.N_y + 2)) + dc.dP_x
         self.dP_y = np.zeros((dc.N_x + 2, dc.N_y + 2)) + dc.dP_y
 
-        # Setting the boundaries on the initial Pressure Array
+        # Setting the intial pressure values
+        self.P = np.zeros((dc.N_x + 2, dc.N_y + 2)) + dc.P
+
+        # Setting the boundaries on the initial Pressure Arrays
         self.dP_x = set_ghost(dc.domain_map, self.dP_x, dc.u_B, type="pressure",source=dc.dP_x_S)
         self.dP_y = set_ghost(dc.domain_map, self.dP_y, dc.v_B, type="pressure",source=dc.dP_y_S)
+        self.P = set_ghost(dc.domain_map, self.P, dc.v_B, type="pressure",source=dc.P_S)
 
         if dc.data_type == "float64":
             self.u.astype(np.float64)
@@ -546,12 +589,14 @@ class flow_class:
             self.t = np.float64(self.t)
             self.dP_x.astype(np.float64)
             self.dP_y.astype(np.float64)
+            self.P.astype(np.float64)
         elif dc.data_type == "float32":
             self.u.astype(np.float32)
             self.v.astype(np.float32)
             self.t = np.float32(self.t)
             self.dP_x.astype(np.float32)
             self.dP_y.astype(np.float32)
+            self.P.astype(np.float32)
 
 def bound_list(map,loc,**kwargs):
     # Returns a list of the fluids on surrounding a given index in a given domain
@@ -576,12 +621,12 @@ def bound_list(map,loc,**kwargs):
     else:
         top = ""
 
-    if y >= y_min:
+    if y > y_min:
         bottom = map[bot_i]
     else:
         bottom = ""
 
-    if x >= x_min:
+    if x > x_min:
         left = map[left_i]
     else:
         left = ""
@@ -605,9 +650,9 @@ def calc_C(map):
             c_bounds = bound_list(map,[i,j])
             my_bool_f = np.array("f" == c_bounds)
             my_bool_p = np.array("p" == c_bounds)
-            # my_bool_o = np.array("o" == c_bounds)
-            # my_bool_s = np.array(["s" in b for b in c_bounds])
-            C[i,j] = np.sum(my_bool_f)  #+ np.sum(my_bool_p) # + np.sum(my_bool_o) + np.sum(my_bool_s)
+            my_bool_o = np.array("o" == c_bounds)
+            my_bool_s = np.array(["s" in b for b in c_bounds])
+            C[i,j] = np.sum(my_bool_f)  + np.sum(my_bool_s) + np.sum(my_bool_p) # + np.sum(my_bool_o)
     return C
 
 @jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:])"],nopython=True,target=my_target)
@@ -621,7 +666,7 @@ def check_conv(past, current, tol):
     else:
         return False
 
-def calc_pressure(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
+def calc_pressure_grad(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
 
     x_len, y_len = dc.domain_map.shape
     x_len -= 1
@@ -656,6 +701,33 @@ def calc_pressure(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
     if count > 5:
         print("pressure took ",count," to converge")
     return dP_x_new, dP_y_new
+
+
+def calc_pressure(dc, P, u_ishift_star, v_ishift_star):
+
+    # Tolerance for convergence
+    tol = 1e-6
+
+    # Setting a dummy matrix to be changed
+    P_new = P
+
+    conv = False
+    count = 0
+
+    while not conv and count < 100:
+        # Calculating the new Pressure scalar field
+        P_new[1:-1,1:-1] = P_new_fun(dc.C, P, dc.rho, dc.h, dc.dt, u_ishift_star, v_ishift_star)
+
+        # Checking if the current time step converges with the new step
+        conv = check_conv(P[1:-1,1:-1], P_new[1:-1,1:-1], tol)
+
+        P = P_new
+
+        count += 1
+    if count > 1:
+        print("pressure took ",count," to converge")
+
+    return P_new
 # =============================================================================
 #                             Analytic Solution
 # =============================================================================
@@ -678,8 +750,8 @@ u_analytic_mean = np.mean(u_vals)
 # =============================================================================
 #                           Defining Simulation
 # =============================================================================
-pressure_solve = "gradient"
-output_file = "./Output/testing/run_15.h5"
+pressure_solve = "value"
+output_file = "./Output/hwk4/run_27.h5"
 show_progress = False
 write_interval = 120
 dt_multiplier = 0.5
@@ -695,10 +767,10 @@ real_start_time = time.time()
 elapsed_time = lambda st_t: time.time() - st_t
 
 # Initializing the domain class
-dc = domain_class(N_x=50,
-                  N_y=0,
-                  L_x=0.12,
-                  L_y=0.02,
+dc = domain_class(N_x=0,
+                  N_y=50,
+                  L_x=0.10,
+                  L_y=0.05,
                   dt = 5e-6,
                   data_type=data_type
                   # dP_x=dP_analytic THis is not used
@@ -713,28 +785,29 @@ dc.check_dtype()
 # Setting initial pressure gradient
 dc.dP_x = 0.0
 dc.dP_y = 0.0
+dc.P = 101325 # atmospheric pressure in pascals
 
 # Initial Velocities
-dc.u_init = 0.1 #0.03 #u_analytic_mean
-dc.v_init = 0 #u_analytic_mean
+dc.u_init = 0.01 #0.03 #u_analytic_mean
+dc.v_init = 0. #u_analytic_mean
 
 # Setting the time
-dc.T = 10
+dc.T = 5
 dc.N_t = dc.T/dc.dt
 
 dc.top   = "wall"
 dc.bottom = "wall"
-dc.left  = "outflow"
-dc.right = "outflow"
+dc.left  = "periodic"
+dc.right = "periodic"
 dc.set_bounds()
 # print(dc.C.T)
 # print(dc.domain_map.T)
 # exit()
 # Putting a blockage in the flow
-width = 0.003
+width = 0.008
 st_x    = int(dc.N_x//4 - (width//dc.h)*0.5)
 en_x = int(st_x+width//dc.h)
-height = 0.006
+height = 0.012
 st_y    = 0 #int(dc.N_y//2 - (height//dc.h)*0.5)
 en_y = int(st_y+height//dc.h)
 
@@ -753,6 +826,7 @@ dc.domain_map[dc.domain_map == "w"] = "w_0"
 # dc.domain_map[:,-1] = "w_1"
 
 # Changing Soure Numbers
+# dc.domain_map[1,:] = "s_0" # Left
 # dc.domain_map[dc.domain_map == "s"] = "s_0"
 # dc.domain_map[-1,:] = "s_1" # Right
 # dc.domain_map[:,-1] = "s_1" # Top
@@ -762,10 +836,12 @@ dc.u_B = [0, 0] # 4.69 is the target for
 dc.v_B = [0, 0]
 
 # Source Terms
-dc.u_S    = [0.1, 0]
+dc.u_S    = [0., 0.]
 dc.v_S    = [0, 0]
 dc.dP_x_S = [0. , 0]
 dc.dP_y_S = [0., 0.]
+dc.P_S = [dc.P, dc.P-(2.4*dc.L_y)] # -2.4 Pa/m
+
 
 # Getting a mesh of x and y values
 # dc.x_grid = np.arange(0-dc.h/2,dc.L_x+dc.h/2,dc.h)
@@ -793,7 +869,7 @@ v = fc.v
 t = fc.t
 dP_x = fc.dP_x
 dP_y = fc.dP_y
-
+P = fc.P
 
 # %% Applying the boundary conditions
 if dc.data_type == "float64":
@@ -808,6 +884,7 @@ v_list = np.array(v, dtype=numpy_dtype)
 t_list = np.array(t, dtype=numpy_dtype)
 dP_x_list = np.array(dP_x, dtype=numpy_dtype)
 dP_y_list = np.array(dP_y, dtype=numpy_dtype)
+P_list = np.array(P, dtype=numpy_dtype)
 
 # Pulling some values out of the domain class
 x_vals = dc.x_grid
@@ -908,30 +985,57 @@ while t < dc.T: # and not user_done:
     v_star = vel_star(v, dc.dt, A_y, nu, D_y) #v + dc.dt * ( -A_y + nu * D_y )
 
     # Doing the boundaries on the star velocities
-    # u_star = set_ghost(dc.domain_map, u_star, dc.u_B, source=dc.u_S)
-    # v_star = set_ghost(dc.domain_map, v_star, dc.v_B, source=dc.v_S)
+    u_star = set_ghost(dc.domain_map, u_star, dc.u_B, source=dc.u_S)
+    v_star = set_ghost(dc.domain_map, v_star, dc.v_B, source=dc.v_S)
 
     # Shifting the velocitiy values
     u_ishift_star = u_shift_values(u_star)
     v_ishift_star = v_shift_values(v_star)
 
-    u_ishift_star = set_ghost(dc.domain_map, u_ishift_star, dc.u_B, source=dc.u_S)
-    v_ishift_star = set_ghost(dc.domain_map, v_ishift_star, dc.v_B, source=dc.v_S)
+    # u_ishift_star = set_ghost(dc.domain_map, u_ishift_star, dc.u_B, source=dc.u_S)
+    # v_ishift_star = set_ghost(dc.domain_map, v_ishift_star, dc.v_B, source=dc.v_S)
 
     # Calculating the new pressures if it is desired
     if pressure_solve == "gradient":
         # dP_x = set_ghost(dc.domain_map,dP_x, dc.u_B, type="pressure",source=dc.dP_x_S)
         # dP_y = set_ghost(dc.domain_map,dP_y, dc.u_B, type="pressure",source=dc.dP_y_S)
 
-        dP_x, dP_y = calc_pressure(dc, dP_x, dP_y, u_ishift_star, v_ishift_star)
+        dP_x, dP_y = calc_pressure_grad(dc, dP_x, dP_y, u_ishift_star, v_ishift_star)
         dP_x = set_ghost(dc.domain_map,dP_x, dc.u_B, type="pressure",source=dc.dP_x_S)
         dP_y = set_ghost(dc.domain_map,dP_y, dc.u_B, type="pressure",source=dc.dP_y_S)
         # dP_x[:,:] = 0
+    elif pressure_solve.lower() == "value":
+        P = set_ghost(dc.domain_map, P, dc.u_B, h=dc.h, type="pressure",source=dc.P_S)
+        # plt.figure()
+        # plt.contourf(x_vals,y_vals,P.T/np.max(P.T))
+        P = calc_pressure(dc, P, u_ishift_star, v_ishift_star)
+
+        # plt.figure()
+        # plt.contourf(x_vals,y_vals,P.T)#/np.max(P.T))
+        dP_x[1:-1,1:-1] = (P[2:,1:-1] - P[1:-1,1:-1])/dc.h
+        dP_y[1:-1,1:-1] = (P[1:-1,2:] - P[1:-1,1:-1])/dc.h
+        dP_x = set_ghost(dc.domain_map,dP_x, dc.u_B, type="pressure",source=dc.dP_x_S)
+        dP_y = set_ghost(dc.domain_map,dP_y, dc.u_B, type="pressure",source=dc.dP_y_S)
+
+        dP_x[-2,:] = 0
+        dP_x[1,:] = 0
+        dP_x[:,-2] = 0
+        dP_x[:,1] = 0
+        dP_y[-2,:] = 0
+        dP_y[1,:] = 0
+        dP_y[:,-2] = 0
+        dP_y[:,1] = 0
+
+        # for ln in dP_x.T:
+        #     print(ln)
+
+        # plt.show()
+        # plt.pause(0.001)
+        # exit()
     elif pressure_solve == "constant_gradient":
         dP_x = fc.dP_x
         dP_y = fc.dP_y
 
-    # print(dP_x[:,-2])
 
     # Calculating the new time velocities
     u_ishift = vel_ishift_fun(u_ishift_star, dc.dt, rho, dc.h, dP_x, dc.F_x)
@@ -946,8 +1050,8 @@ while t < dc.T: # and not user_done:
     v[1:-1,1:-1] = v_new_fun(v_ishift)
 
     # Setting boundary Conditions and updating time
-    u = set_ghost(dc.domain_map, u, dc.u_B, source=dc.u_S)
-    v = set_ghost(dc.domain_map, v, dc.v_B, source=dc.v_S)
+    # u = set_ghost(dc.domain_map, u, dc.u_B, source=dc.u_S)
+    # v = set_ghost(dc.domain_map, v, dc.v_B, source=dc.v_S)
     t += dc.dt
 
     # Getting rid of very small numbers
@@ -960,9 +1064,10 @@ while t < dc.T: # and not user_done:
     t_list = np.append(t_list, t)
     dP_x_list = np.dstack((dP_x_list, dP_x))
     dP_y_list = np.dstack((dP_y_list, dP_y))
+    P_list = np.dstack((P_list, P))
 
     # Calculating the size of all of the arrays
-    current_size = u_list.nbytes + v_list.nbytes + dP_x_list.nbytes + dP_y_list.nbytes
+    current_size = u_list.nbytes + v_list.nbytes + dP_x_list.nbytes + dP_y_list.nbytes + P_list.nbytes
 
     # Saving an HDF5 File if the size of the arrays reaches a certain number of bytes
     #   or the write interval is reached
@@ -975,6 +1080,7 @@ while t < dc.T: # and not user_done:
             hf.create_dataset("v", data=v_list, maxshape=(v.shape[0],v.shape[1],None), compression="gzip", chunks=True)
             hf.create_dataset("dP_x", data=dP_x_list, maxshape=(u.shape[0],u.shape[1],None), compression="gzip", chunks=True)
             hf.create_dataset("dP_y", data=dP_y_list, maxshape=(v.shape[0],v.shape[1],None), compression="gzip", chunks=True)
+            hf.create_dataset("P", data=P_list, maxshape=(u.shape[0],u.shape[1],None), compression="gzip", chunks=True)
             hf.create_dataset("t", data=t_list, maxshape=(None,), compression="gzip", chunks=True)
 
             hf.create_dataset("x", data=x_vals, maxshape=x_vals.shape, compression="gzip")
@@ -1005,6 +1111,10 @@ while t < dc.T: # and not user_done:
             hf["dP_y"].resize(hf["dP_y"].shape[2] + dP_y_list.shape[2]-1, axis=2)
             hf["dP_y"][:,:,-(dP_y_list.shape[2]-1):] = dP_y_list[:,:,1:]
             dP_y_list = dP_y_list[:,:,-1]
+
+            hf["P"].resize(hf["P"].shape[2] + P_list.shape[2]-1, axis=2)
+            hf["P"][:,:,-(P_list.shape[2]-1):] = P_list[:,:,1:]
+            P_list = P_list[:,:,-1]
 
             hf["t"].resize(hf["t"].shape[0] + t_list.shape[0]-1, axis=0)
             hf["t"][-(t_list.shape[0]-1):] = t_list[1:]

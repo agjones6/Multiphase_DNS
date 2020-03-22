@@ -20,12 +20,12 @@ v_1 = f_v(x_1, y_1)
 
 
 # Defining the hdf5 file
-mb_num = 13
+mb_num = 18
 skip_num = 1
 my_dpi = 400
 my_fps = 25
-my_file    = "./Output/testing/run_" + str(mb_num) + ".h5"
-video_name = "./Videos/testing/run_" + str(mb_num) + ".mp4"
+my_file    = "./Output/hwk4/run_" + str(mb_num) + ".h5"
+video_name = "./Videos/hwk4/run_" + str(mb_num) + ".mp4"
 
 show_fig = True
 save_fig = False
@@ -73,7 +73,7 @@ dx = P_x*0
 
 dy = P_y*0
 factor = 1
-for k in range(k_prev,(len(t)-1),50):
+for k in range(k_prev,(len(t)-1),10):
 
     interp_u = interp2d(x, y, u[:,:,k].T,kind="linear")
     interp_v = interp2d(x, y, v[:,:,k].T,kind="linear")
