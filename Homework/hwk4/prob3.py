@@ -62,5 +62,7 @@ X,Y = np.meshgrid(x,y)
 # plt.imshow(psi.T,interpolation="bicubic")
 
 # fig,ax = plt.subplots(1,1)
-plt.contourf(x,y,psi.T,colors=[(1,1,1),[0/255, 30/255, 222/255]])#cmap="summer")#colors=["white","blue"])
+plt.contourf(x,y,psi.T,colors=[(1,1,1),[0/255, 30/255, 222/255],"black"])#cmap="summer")#colors=["white","blue"])
+plt.contour(x,y,psi.T,colors=["black"])#cmap="summer")#colors=["white","blue"])
+plt.title("Level Set Initialization")
 plt.show()

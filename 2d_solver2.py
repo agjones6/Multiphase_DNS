@@ -709,7 +709,7 @@ u_analytic_mean = np.mean(u_vals)
 #                           Defining Simulation
 # =============================================================================
 pressure_solve = "value"
-output_file = "./Output/hwk4/run_35.h5"
+output_file = "./Output/hwk4/run_40.h5"
 show_progress = False
 write_interval = 120
 dt_multiplier = 0.50
@@ -746,8 +746,8 @@ dc.dP_y = 0.0
 dc.P = 101325 # atmospheric pressure in pascals
 
 # Initial Velocities
-dc.u_init = 0.01 #0.03 #u_analytic_mean
-dc.v_init = 0.0001 #u_analytic_mean
+dc.u_init = -0.01 #0.03 #u_analytic_mean
+dc.v_init = 0.0 #u_analytic_mean
 
 # Setting the time
 dc.T = 60
@@ -871,8 +871,8 @@ v_new = np.zeros(v.shape, dtype=numpy_dtype)
 
 # Temporarily making a velocity profile for the inlet and exit
 u_prof = u_fun(y_vals - y_min)
-for i in range(len(y_vals[1:-1])):
-    u_ishift[i+1,1:-1] = u_prof[1:-1]
+# for i in range(len(y_vals[1:-1])):
+#     u_ishift[i+1,1:-1] = u_prof[1:-1]
 # u_ishift[-1,:] = u_prof
 
 # This is a counting variable for saving hdf5 file
