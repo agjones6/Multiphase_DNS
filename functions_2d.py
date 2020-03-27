@@ -29,6 +29,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import h5py
 from numba import jit, cuda, vectorize, float64, float32, guvectorize
+import copy
 
 # =============================================================================
 #                                 Functions
@@ -116,6 +117,14 @@ def vel_mag_fun(u,v):
 def calc_diff(past,current):
     return np.absolute(past - current)
 
+@jit(["boolean(float64[:,:],float64[:,:],float64)"],nopython=True,target=my_target)
+def check_conv(past, current, tol):
+    diff = np.absolute(past - current) #calc_diff(past, current)
+    if np.all(diff < tol):
+        return True
+    else:
+        return False
+
 def show_domain(map):
     # Changing the values to integers
     map[map=="f"] = 0
@@ -174,192 +183,72 @@ def set_boundary(N_space,**kwargs):
     map[0,:] = my_str(left)
     map[-1,:] = my_str(right)
 
+    map = np.array(map)
     return map
 
-def set_ghost(map, val, u_B=0, **kwargs):
-
-    type = kwargs.get("type","velocity")
-    source = kwargs.get("source",0)
-    h = kwargs.get("h",1)
-
-    bound_type = 1
-    try:
-        if len(u_B) == 2:
-            bound_type = 2
-    except:
-        bound_type = 1
-        pass
-
-    # Setting an original value matrix
-    u0 = val
-
-    # Checking to make sure the velocity array passed in is 2D
-    if len(val.shape) == 2:
-        num_i, num_j = val.shape
-        num_i = num_i - 1
-        num_j = num_j - 1
-
-    def find_fluid(map,loc,**kwargs):
-        adj = kwargs.get("adj",0)
-
-        x = loc[0]
-        y = loc[1]
-
-        x_max,y_max = map.shape
-        x_min,y_min = 0,0
-
-        x_max -= 1
-        y_max -= 1
-
-        top_i = (x,y+1)
-        bot_i = (x,y-1)
-        right_i = (x+1,y)
-        left_i = (x-1,y)
-        if y < y_max:
-            top = map[top_i]
+# Checking to see if there are different options attached to a string
+def get_num_option(cm,val_arr):
+    # If an optional number is given with an underscore
+    if len(cm.split("_")) > 1:
+        w_type = cm.split("_")[1]
+        w_type = int(w_type)
+        # If there is an array of options
+        if len(val_arr) != 0:
+            bound_val = val_arr[w_type]
         else:
-            top = ""
-
-        if y > y_min:
-            bottom = map[bot_i]
+            bound_val = val_arr
+    else:
+        if len(val_arr) != 0:
+            bound_val = val_arr[0]
         else:
-            bottom = ""
+            bound_val = val_arr
+    return bound_val
 
-        if x > x_min:
-            left = map[left_i]
-        else:
-            left = ""
+def shift_dm(map,direction):
 
-        if x < x_max:
-            right = map[right_i]
-        else:
-            right = ""
+    if direction == "i":
+        # Starts out as a smaller version of the actual map
+        new_map = map[:-1,:]
 
-        bound_array = np.array([top,bottom,left,right])
-        index_array = np.array([top_i, bot_i, left_i, right_i])
-        try:
-            final_index = index_array[bound_array=="f"][0]
-            final_index = (final_index[0]+(final_index[0]-x)*adj,final_index[1]+(final_index[1]-y)*adj)
-        except:
-            try:
-                # This is for the corners
-                # print(x,y,bound_array)
-                final_index = [("w" not in b and "" != b) for b in bound_array]
-                final_index = index_array[final_index][0]
-                final_index = (final_index[0]+(final_index[0]-x)*adj,final_index[1]+(final_index[1]-y)*adj)
-                # print(final_index)
-            except:
-                # print("didnt Work")
-                final_index = (x,y)
+        # Getting a top and bottom shifted map
+        top_map = map[1:,:]
+        bot_map = map[:-1,:]
 
-        return final_index
+        # Getting the logicals of where the walls are
+        w_log_top = str_index(map[1:,:],"w")
+        w_log_bot = str_index(map[:-1,:],"w")
 
-    for i in range(len(map[:,0])):
-        for j in range(len(map[0,:])):
-            # Getting the current cell type
-            cm = map[i,j]
-            # print(i,j)
+        # Changing the value of the new map if the logical is true
+        new_map[w_log_top] = top_map[w_log_top]
+        new_map[w_log_bot] = bot_map[w_log_bot]
 
-            if type.lower() == "pressure":
-                # Pressure gradient in the wall will always be 0
-                # NOTE THIS MAY NEED TO CHANGE
+        # Getting the map edge to put on the new map
+        edge_map = map[-1,:]
+        new_map = np.row_stack((new_map,edge_map))
+    elif direction == "j":
+        # Starts out as a smaller version of the actual map
+        new_map = map[:,:-1]
 
-                # Setting periodic Boundaries
-                if "p" in cm:
-                    # f_ind1 = find_fluid(map,[i,j],adj=1)
-                    # f_ind2 = find_fluid(map,[i,j])
-                    # val[i,j] = (u0[f_ind1] - u0[f_ind2])*h + u0[f_ind2]
+        # Getting a top and bottom shifted map
+        top_map = map[:,1:]
+        bot_map = map[:,:-1]
 
-                    f_ind = find_fluid(map,[i,j],adj=-1)
-                    x_i,y_i = f_ind
-                    if x_i > num_i:
-                        x_i = x_i-num_i
-                    if y_i > num_j:
-                        y_i = y_i-num_j
-                        # print(f_ind[0]-num_i)
-                    if x_i < 0:
-                        x_i = x_i + num_i
-                    if y_i < 0:
-                        y_i = y_i + num_j
+        # Getting the logicals of where the walls are
+        w_log_top = str_index(map[:,1:],"w")
+        w_log_bot = str_index(map[:,:-1],"w")
 
-                    # print((i,j), "-> ", (x_i,y_i))
-                    val[i,j] = u0[x_i,y_i]
+        # Changing the value of the new map if the logical is true
+        new_map[w_log_top] = top_map[w_log_top]
+        new_map[w_log_bot] = bot_map[w_log_bot]
 
-                elif not "f" in cm:
-                    val[i,j] = 0
-                # if not "f" in cm:
-                #     val[i,j] = 0
-            else:
-                # Setting the wall ghost cells
-                if "w" in cm:
-                    f_ind = find_fluid(map,[i,j])
+        # Getting the map edge to put on the new map
+        edge_map = map[:,-1]
+        new_map = np.column_stack((new_map,edge_map))
+    else:
+        print("Please Enter a Correct Direction Option")
+        return None
 
-                    # Using the fluid index to set the ghost cell value
-                    # if (i,j) == f_ind:
-                    #     # This is for the unused corners of the domain
-                    #     val[i,j] = 0
-                    # else:
-                    # Checking to see if there are different walls
-                    if len(cm.split("_")) > 1:
-                        w_type = cm.split("_")[1]
-                        w_type = int(w_type)
-                        if len(u_B) != 0:
-                            val[i,j] = 2*u_B[w_type] - u0[f_ind]
-                        else:
-                            val[i,j] = 2*u_B - u0[f_ind]
-                    else:
-                        if len(u_B) != 0:
-                            val[i,j] = 2*u_B[0] - u0[f_ind]
-                        else:
-                            val[i,j] = 2*u_B - u0[f_ind]
-
-                # Setting Outflow Boundaries
-                elif "o" in cm:
-                    # --> Simple approach where the ghost cell equals the nearest fluid value
-                    # The Property on the boundary is equal to the fluid near the boundary
-                    # f_ind = find_fluid(map,[i,j])
-                    # x_i,y_i = f_ind
-                    # val[i,j] = u0[x_i,y_i]
-
-                    # --> Linear Extrapolation approach
-                    f_ind1 = find_fluid(map,[i,j],adj=1)
-                    f_ind2 = find_fluid(map,[i,j])
-                    val[i,j] = (u0[f_ind1] - u0[f_ind2])*h + u0[f_ind2]
-
-                # Setting periodic Boundaries
-                elif "p" in cm:
-                    f_ind = find_fluid(map,[i,j],adj=-2)
-                    x_i,y_i = f_ind
-                    if x_i > num_i:
-                        x_i = x_i-num_i
-                    if y_i > num_j:
-                        y_i = y_i-num_j
-                    if x_i < 0:
-                        x_i = x_i + num_i
-                    if y_i < 0:
-                        y_i = y_i + num_j
-
-                    val[i,j] = u0[x_i,y_i]
-
-            # Setting the source term ghost cells
-            if "s" in cm:
-                # Checking to see if there are more than one source terms
-                if len(cm.split("_")) > 1:
-                    s_type = cm.split("_")[1]
-                    s_type = int(s_type)
-                    if len(source) != 0:
-                        val[i,j] = source[s_type]
-                        # if type.lower() == "pressure":
-                        #     print(i,j, source[s_type])
-                    else:
-                        val[i,j] = source
-                else:
-                    if len(u_B) != 0:
-                        val[i,j] = source[0]
-                    else:
-                        val[i,j] = source
-
-    return val
+    return new_map
 
 def bound_list(map,loc,**kwargs):
     # Returns a list of the fluids on surrounding a given index in a given domain
@@ -403,6 +292,242 @@ def bound_list(map,loc,**kwargs):
 
     return bound_array
 
+def find_fluid(map,loc,**kwargs):
+    adj = kwargs.get("adj",0)
+    bound_array = kwargs.get("bound_arry",bound_list(map,loc,adj=adj))
+    #
+    x = loc[0]
+    y = loc[1]
+
+    top_i = (x,y+1)
+    bot_i = (x,y-1)
+    right_i = (x+1,y)
+    left_i = (x-1,y)
+
+    index_array = np.array([top_i, bot_i, left_i, right_i])
+    try:
+        final_index = index_array[bound_array=="f"][0]
+        final_index = (final_index[0]+(final_index[0]-x)*adj,final_index[1]+(final_index[1]-y)*adj)
+    except:
+        try:
+            # This is for the corners
+            # print(x,y,bound_array)
+            # final_index = [("w" not in b and "" != b) for b in bound_array]
+            # final_index = index_array[final_index][0]
+            # final_index = (final_index[0]+(final_index[0]-x)*adj,final_index[1]+(final_index[1]-y)*adj)
+            final_index = (x,y)
+            # print("here",(x,y))
+            # print(bound_array)
+        except:
+            # print("didnt Work")
+            final_index = (x,y)
+
+    return final_index
+
+def extrap(map,ind,val0,mult=1):
+    i = ind[0]
+    j = ind[1]
+    bound_array = bound_list(map,[i,j])
+    f_ind1 = find_fluid(map,[i,j],bound_array=bound_array,adj=1) # One more in from the boundary
+    f_ind2 = find_fluid(map,[i,j],bound_array=bound_array)
+    # print((i,j),f_ind1,f_ind2)
+    return mult*(val0[f_ind1] - val0[f_ind2]) + val0[f_ind2]
+
+def set_ghost(map, val, u_B=0, **kwargs):
+
+    type = kwargs.get("type","u")
+    source = kwargs.get("source",0)
+    h = kwargs.get("h",1)
+
+    bound_type = 1
+    try:
+        if len(u_B) == 2:
+            bound_type = 2
+    except:
+        bound_type = 1
+        pass
+
+    # Setting an original value matrix
+    val0 = np.copy(val)
+
+    # Checking to make sure the velocity array passed in is 2D
+    if len(val.shape) == 2:
+        num_i, num_j = val.shape
+        num_i = num_i - 1
+        num_j = num_j - 1
+
+    # Getting the mininum and maximum x/y values
+    x_max,y_max = map.shape
+    x_min,y_min = 0,0
+
+    x_max -= 1
+    y_max -= 1
+
+    # This pulls the indices of interest into arrays. That way only the non-fluid cells are checked
+    voi_indices = np.where(np.logical_not(str_index(map,"f")))
+    voi_i = voi_indices[0]
+    voi_j = voi_indices[1]
+    for ind in range(len(voi_i)):
+        i = voi_i[ind]
+        j = voi_j[ind]
+
+        # Skipping corners
+        if i == x_max and (j == y_min or j == y_max):
+            # print(i,j)
+            continue
+        if j == y_max and (i == x_min or i == x_max):
+            # print(i,j)
+            continue
+
+        # for j in voi_j:
+        # Getting the current cell type
+        cm = map[i,j]
+        # print(i,j)
+
+        if type.lower() == "p":
+            # Pressure gradient in the wall will always be 0
+            # NOTE THIS MAY NEED TO CHANGE
+
+            # Setting periodic Boundaries
+            if "p" in cm:
+                # f_ind1 = find_fluid(map,[i,j],adj=1)
+                # f_ind2 = find_fluid(map,[i,j])
+                # val[i,j] = (val0[f_ind1] - val0[f_ind2])*h + val0[f_ind2]
+                # This needs to change two pressure cells in order to be stable
+                f_ind = find_fluid(map,[i,j],adj= -1)
+                x_i,y_i = f_ind
+                if x_i > num_i:
+                    x_i = x_i-num_i
+                if y_i > num_j:
+                    y_i = y_i-num_j
+                    # print(f_ind[0]-num_i)
+                if x_i < 0:
+                    x_i = x_i + num_i
+                if y_i < 0:
+                    y_i = y_i + num_j
+
+                # print((i,j), "-> ", (x_i,y_i))
+                val[i,j] = val0[x_i,y_i]
+
+            # Setting Outflow Boundaries
+            elif "o" in cm:
+                # --> Linear Extrapolation approach
+                val[i,j] = 101325 #- (0.02)*-2.4 #extrap(map,[i,j],val0,mult=1)
+
+            elif not "f" in cm:
+                val[i,j] = 0
+
+
+
+            # if not "f" in cm:
+            #     val[i,j] = 0
+
+        elif type.lower() == "u":
+            # Setting the wall ghost cells
+            if "w" in cm:
+                # Getting the boundary velocity
+                bound_vel = get_num_option(cm,u_B)
+
+                # Getting the surrouding cell mao values
+                bound_array = bound_list(map,[i,j]) #[top,bottom,left,right]
+
+                # For u velocity, if the wall is on the left or right, the velicity is equal to the boundary
+                if ("f" in bound_array[0] or "f" in bound_array[1]) and ("f" not in bound_array[2] and "f" not in bound_array[3]):
+                    f_ind = find_fluid(map,[i,j],bound_array=bound_array)
+                    val[i,j] = 2*bound_vel - val0[f_ind]
+                else:
+                    val[i,j] = bound_vel
+
+            # Setting periodic Boundaries
+            elif "p" in cm:# or "o" in cm:
+                f_ind = find_fluid(map,[i,j],adj=-2)
+                x_i,y_i = f_ind
+                if x_i > num_i:
+                    x_i = x_i-num_i
+                if y_i > num_j:
+                    y_i = y_i-num_j
+                if x_i < 0:
+                    x_i = x_i + num_i
+                if y_i < 0:
+                    y_i = y_i + num_j
+
+                val[i,j] = val0[x_i,y_i]
+
+            # Setting Outflow Boundaries
+            elif "o" in cm:
+                # --> Linear Extrapolation approach
+                val[i,j] = extrap(map,[i,j],val0,mult=1)
+
+            # Setting the source term ghost cells
+            elif "s" in cm:
+                bound_val = get_num_option(cm,source)
+                val[i,j] = bound_val
+
+        elif type.lower() == "v":
+            # Setting the wall ghost cells
+            if "w" in cm:
+                # Getting the boundary velocity
+                bound_vel = get_num_option(cm,u_B)
+
+                # Getting the surrouding cell mao values
+                bound_array = bound_list(map,[i,j]) #[top,bottom,left,right]
+
+                # For u velocity, if the wall is on the left or right, the velicity is equal to the boundary
+                if ("f" in bound_array[2] or "f" in bound_array[3]) and ("f" not in bound_array[0] and "f" not in bound_array[1]):
+                    f_ind = find_fluid(map,[i,j],bound_array=bound_array)
+                    val[i,j] = 2*bound_vel - val0[f_ind]
+                else:
+                    val[i,j] = bound_vel
+
+            # Setting Outflow Boundaries
+            elif "o" in cm:
+                # --> Simple approach where the ghost cell equals the nearest fluid value
+                # The Property on the boundary is equal to the fluid near the boundary
+                # f_ind = find_fluid(map,[i,j])
+                # x_i,y_i = f_ind
+                # val[i,j] = val0[x_i,y_i]
+
+                # --> Linear Extrapolation approach
+                val[i,j] = extrap(map,[i,j],val0,mult=1)
+
+            # Setting periodic Boundaries
+            elif "p" in cm:# or "o" in cm:
+                f_ind = find_fluid(map,[i,j],adj=-2)
+                x_i,y_i = f_ind
+                if x_i > num_i:
+                    x_i = x_i-num_i
+                if y_i > num_j:
+                    y_i = y_i-num_j
+                if x_i < 0:
+                    x_i = x_i + num_i
+                if y_i < 0:
+                    y_i = y_i + num_j
+
+                val[i,j] = val0[x_i,y_i]
+
+            # Setting the source term ghost cells
+            elif "s" in cm:
+                bound_val = get_num_option(cm,source)
+                val[i,j] = bound_val
+
+            # # Checking to see if there are more than one source terms
+            # if len(cm.split("_")) > 1:
+            #     s_type = cm.split("_")[1]
+            #     s_type = int(s_type)
+            #     if len(source) != 0:
+            #         val[i,j] = source[s_type]
+            #         # if type.lower() == "pressure":
+            #         #     print(i,j, source[s_type])
+            #     else:
+            #         val[i,j] = source
+            # else:
+            #     if len(u_B) != 0:
+            #         val[i,j] = source[0]
+            #     else:
+            #         val[i,j] = source
+
+    return val
+
 def calc_C(map):
     x_len, y_len = map.shape
     # x_len -= 1
@@ -415,15 +540,9 @@ def calc_C(map):
             my_bool_p = np.array("p" == c_bounds)
             my_bool_o = np.array("o" == c_bounds)
             my_bool_s = np.array(["s" in b for b in c_bounds])
-            C[i,j] = np.sum(my_bool_f)  + np.sum(my_bool_s) + np.sum(my_bool_p) # + np.sum(my_bool_o)
+            C[i,j] = np.sum(my_bool_f)  + np.sum(my_bool_p) + np.sum(my_bool_o) # + np.sum(my_bool_s)
+    C[C==0] = 1
     return C
-
-def check_conv(past, current, tol):
-    diff = calc_diff(past, current)
-    if np.all(diff < tol):
-        return True
-    else:
-        return False
 
 def calc_pressure_grad(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
 
@@ -433,8 +552,8 @@ def calc_pressure_grad(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
 
     tol = 1e-6
 
-    dP_x_new = dP_x
-    dP_y_new = dP_y
+    dP_x_new = copy.copy(dP_x)
+    dP_y_new = copy.copy(dP_y)
 
     x_conv = False
     y_conv = False
@@ -461,32 +580,64 @@ def calc_pressure_grad(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
         print("pressure took ",count," to converge")
     return dP_x_new, dP_y_new
 
-
-def calc_pressure(dc, P, u_ishift_star, v_jshift_star, min_loops=10):
-
-    # Tolerance for convergence
-    tol = 1e-20
-
-    # Setting a dummy matrix to be changed
-    P_new = P
-
+@jit(["float64[:,:](float64,int32,int32,float64[:,:],float64[:,:],float64[:,:]," +
+            "float64[:,:],float64,float64,float64,float64[:,:],float64[:,:])"],nopython=True,target=my_target)
+def loop_Pressure(tol,max_loops,min_loops,wall_0s,P_old,P_new,
+                    C, rho, h, dt, u_ishift_star, v_jshift_star):
     conv = False
     count = 0
 
-    while not conv and count < 100 or count <= min_loops:
+    while not conv and count < max_loops or count <= min_loops:
         # Calculating the new Pressure scalar field
-        P_new[1:-1,1:-1] = P_new_fun(dc.C, P, dc.rho, dc.h, dc.dt, u_ishift_star, v_jshift_star)
-
+        P_new[1:-1,1:-1] = P_new_fun(C, P_old, rho, h, dt, u_ishift_star, v_jshift_star)
+        # P_new = set_ghost(dc.domain_map, P_new, dc.u_B, h=dc.h, type="p",source=dc.P_S)
+        # plt.figure()
+        # plt.contourf(P_new)
+        P_new = P_new*wall_0s
+        # plt.figure()
+        # plt.contourf(P_new)
+        # plt.show()
+        # exit()
         # Checking if the current time step converges with the new step
-        conv = check_conv(P[1:-1,1:-1], P_new[1:-1,1:-1], tol)
+        conv = check_conv(P_old[1:-1,1:-1], P_new[1:-1,1:-1], tol)
 
-        P = P_new
+        # Normalizing the pressure back to absolute
+        # P_new = np.absolute((P_new / np.amax(P_new)) * dc.P)
+        P_old = np.copy(P_new[:,:])
 
         count += 1
     # if count > 1:
     #     print("pressure took ",count," to converge")
 
     return P_new
+
+def calc_pressure(dc, oc, P, u_ishift_star, v_jshift_star):
+
+    # Tolerance for convergence
+    min_loops=oc.min_Ploops
+    max_loops=oc.max_Ploops
+    tol = oc.Ptol
+
+    # Setting a dummy matrix to be changed
+    P_old = np.array(np.copy(P[:,:]))
+    P_new = np.array(np.copy(P[:,:]))
+
+    # Getting wall 0s to set the pressure values
+    wall_0s = np.ones(P_old.shape)
+    wall_index = str_index(dc.domain_map,"w")
+    wall_0s[wall_index] = 0
+    # plt.imshow(wall_0s)
+    # plt.show()
+    # exit()
+
+    P_new = loop_Pressure(tol,max_loops, min_loops,wall_0s,P_old,P_new,
+                dc.C, dc.rho, dc.h, dc.dt, u_ishift_star, v_jshift_star)
+
+    return np.copy(P_new)
+
+def str_index(map,str):
+    map = np.array(map,dtype="str")
+    return np.core.defchararray.find(map,str)!=-1
 
 class domain_class:
     def __init__(self, **kwargs):
@@ -582,13 +733,26 @@ class domain_class:
         self.check_dt = True
 
     def set_bounds(self):
+        # Creating a domain map
         self.domain_map = set_boundary([self.N_x,self.N_y],
                                        top   =self.top,
                                        bottom=self.bottom,
                                        left  =self.left,
                                        right =self.right)
+        self.update_bound_vals()
 
+    def update_bound_vals(self):
+        # Creating an array of C's for the pressure calculation
         self.C = calc_C(self.domain_map)
+
+        # Getting shifted domain maps for the i and j dimensions for the walls
+        self.update_dm_shift()
+
+    def update_dm_shift(self):
+        # Getting shifted domain maps for the i and j dimensions for the walls
+        dum_map = np.copy(self.domain_map)
+        self.dm_ishift = shift_dm(dum_map,"i")
+        self.dm_jshift = shift_dm(dum_map,"j")
 
     def check_dtype(self):
         if self.data_type == "float64":
@@ -624,9 +788,9 @@ class flow_class:
         self.P = np.zeros((dc.N_x + 2, dc.N_y + 2)) + dc.P
 
         # Setting the boundaries on the initial Pressure Arrays
-        self.dP_x = set_ghost(dc.domain_map, self.dP_x, dc.u_B, type="pressure",source=dc.dP_x_S)
-        self.dP_y = set_ghost(dc.domain_map, self.dP_y, dc.v_B, type="pressure",source=dc.dP_y_S)
-        self.P = set_ghost(dc.domain_map, self.P, dc.v_B, type="pressure",source=dc.P_S)
+        self.dP_x = set_ghost(dc.domain_map, self.dP_x, dc.u_B, type="p",source=dc.dP_x_S)
+        self.dP_y = set_ghost(dc.domain_map, self.dP_y, dc.v_B, type="p",source=dc.dP_y_S)
+        self.P = set_ghost(dc.domain_map, self.P, dc.v_B, type="p",source=dc.P_S)
 
         if dc.data_type == "float64":
             self.u.astype(np.float64)
@@ -660,8 +824,13 @@ class flow_class:
         self.v_new = np.zeros(self.v.shape, dtype=numpy_dtype)
 
         # Setting the boundaries on the initial velocity array
-        self.u_ishift = set_ghost(dc.domain_map, self.u_ishift, dc.u_B,source=dc.u_S)
-        self.v_jshift = set_ghost(dc.domain_map, self.v_jshift, dc.v_B,source=dc.v_S)
+        self.u_ishift = set_ghost(dc.dm_ishift, self.u_ishift, dc.u_B,type="u",source=dc.u_S)
+        self.v_jshift = set_ghost(dc.dm_jshift, self.v_jshift, dc.v_B,type="v",source=dc.v_S)
+
+        # Calculating the cell velocities
+        self.u[1:-1,1:-1] = u_new_fun(self.u_ishift)
+        self.v[1:-1,1:-1] = v_new_fun(self.v_jshift)
+
 class save_class:
     def __init__(self,flow_class):
         # Creating lists to store all of the variables
@@ -676,7 +845,7 @@ class save_class:
         # This is a counting variable for saving hdf5 file
         self.save_count = 0
 
-    def save_values(self, dc,fc,oc):
+    def save_values(self,elapsed_time, dc,fc,oc):
         # Appending values to the lists for storage
         self.u_list = np.dstack((self.u_list, fc.u))
         self.v_list = np.dstack((self.v_list, fc.v))
@@ -745,7 +914,7 @@ class save_class:
             self.save_count += 1
             print("\n")
             print("\tWrote Output at t = ", round(fc.t,5))
-            print("\tReal Elapsed Time =", oc.elapsed_time(oc.real_start_time))
+            print("\tReal Elapsed Time =", elapsed_time(oc.real_start_time))
             print("\tdt = ", dc.dt)
             print("")
 
@@ -765,4 +934,8 @@ class option_class:
         self.max_size = 10e6
 
         self.real_start_time = time.time()
-        self.elapsed_time = lambda st_t: time.time() - st_t
+
+        # Set number of loops for the pressure convergence
+        self.min_Ploops = int(10)
+        self.max_Ploops = int(1000)
+        self.Ptol = 1e-1

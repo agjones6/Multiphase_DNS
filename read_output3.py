@@ -5,6 +5,7 @@
 
 import h5py
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 import matplotlib.animation as animation
@@ -20,6 +21,9 @@ def make_plot(fig, mp, x, y, u, v, **kwargs):
     show_0 = kwargs.get("show_0","")
     clear_plot = kwargs.get("clear_plot",True)
     sl_density = kwargs.get("sl_density",1.0)
+    norm = kwargs.get("norm",False)
+    show_cbar = kwargs.get("show_cbar",False)
+    show_block = kwargs.get("show_block",None)
 
     # Plotting the velocity profile
     # --> Plotting
@@ -76,6 +80,9 @@ def make_plot(fig, mp, x, y, u, v, **kwargs):
         # mp.streamplot(X,Y, u, v, density=sl_density, color=M, cmap="jet")
         # print(M.shape)
         # strm = mp.streamplot(x, y, u, v, linewidth=lw, cmap="jet")
+        if not show_block is None:
+            # u = np.ma.array(u,mask=show_block)
+            u[show_block.T] = np.nan
         strm = mp.streamplot(x, y, u, v, density=sl_density, color=M, cmap="jet")
         # fig.colorbar(strm.lines)
         mp.set_xlim([x[0],x[-1]])
@@ -89,17 +96,59 @@ def make_plot(fig, mp, x, y, u, v, **kwargs):
     elif plot_type.lower() == "contourf":
 
         mag = (u**2 + v**2)**0.5
-        mp.contourf(x,y,mag)
+        if norm:
+            max_u = np.nanmax(u)
+            u = u #max_u
+
+        CS = mp.contourf(x,y,u)
+
+
+        if show_cbar:
+            # print("\t", (np.amin(mag),np.amax(mag)))
+            norm = mpl.colors.Normalize(vmin=np.nanmin(u),vmax=np.nanmax(u))
+            cmap = plt.get_cmap("viridis")
+            my_cm = plt.cm.ScalarMappable(norm=norm,cmap=cmap)
+            try:
+                global cbar
+                cbar.update_normal(my_cm)
+                # cbar.set_label(str(round(max_u,3)))
+                # cbar.config_axis()
+                # cbar.draw_all()
+                # cbar.update_ticks()
+            except Exception as e:
+                print(e)
+                cbar = fig.colorbar(my_cm,ax=mp)
+                # cb1 = mpl.colorbar(mp, cmap=cmap,norm=norm)
+
+    # if show block is wanted
+    if not show_block is None:
+
+        # x_block = X[show_block]
+        # y_block = Y[show_block]
+        # print(x_block)
+        # (disc_xlb,disc_xub,disc_ylb,disc_yub)
+        # (np.amin(x_block),np.amax(x_block),np.amin(y_block),np.amax(y_block))
+        mp.imshow(~show_block.T, alpha=0.5, extent=(np.amin(x),np.amax(x),np.amin(y),np.amax(y)), origin='lower',
+                interpolation='nearest', cmap='gray', aspect='auto')
+        # mp.set_aspect('equal')
+
 
 # --> Defining the hdf5 file reading variables
-mb_num = 33
-skip_num = 0
-my_dpi = 400
-my_fps = 1
-my_file    = "./Output/hwk4/run_" + str(mb_num) + ".h5"
-video_name = "./Videos/hwk4/run_" + str(mb_num) + ".mp4"
-# my_file    = "./Output/MB_" + str(mb_num) + ".h5"
-# video_name = "./Videos/MB_" + str(mb_num) + ".mp4"
+mb_num = 2
+skip_num = 5
+my_dpi = 100
+my_fps = 30
+my_file    = "./Output/hwk5/run_" + str(mb_num) + ".h5"
+video_name = "./Videos/hwk5/run_" + str(mb_num) + ".mp4"
+
+# Ben Array
+# hkl = np.array([[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],\
+#                 [1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],\
+#                 [1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],\
+#                 [1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0]])
+# print(hkl)
+# print(hkl.shape)
+# exit()
 
 # Options to show a video or save a video
 show_fig = True
@@ -138,16 +187,16 @@ x = hf["x"]
 y = hf["y"]
 
 # Choosing the starting index
-i_start = len(t)//1.2
-i_start = 0
+i_start = len(t)//2
+# i_start = 0
 
 # print(dP_x[5,1:-1,1])
 # Plotting a specific x location of u Velocity at a ceratin time
-# plt.figure()
-# plt.plot(u[1:-1,1:-1,-1].T,y)
 # plt.plot(np.mean(u[1:-1,1:-1,-1].T,axis=1),y,'k--',linewidth=3)
 # # plt.figure()
 # # plt.plot(x,dP_x[1:-1,1:-1,-1])
+# plt.figure()
+# plt.plot(u[:,:,-1].T,y)
 # plt.show()
 # exit()
 
@@ -156,7 +205,10 @@ my_plot1 = fig.add_subplot(2,1,1)#,projection='3d')
 my_plot4 = fig.add_subplot(2,1,2)#,projection='3d')
 # my_plot2 = fig.add_subplot(2,2,3)
 # my_plot3 = fig.add_subplot(2,2,4)
+# max_P = np.amax(P[1:-1,1:-1,:])
+# min_P = np.amin(P[1:-1,1:-1,:])
 def animate(i):
+
     # Calculating the index
     i = i + (i) * skip_num + i_start
     if i >= len(t)-1:
@@ -168,10 +220,14 @@ def animate(i):
     v_i = v[1:-1,1:-1,i]#/np.max(v[1:-1,1:-1,i])
     dP_x_i = dP_x[1:-1,1:-1,i]
     dP_y_i = dP_y[1:-1,1:-1,i]
-    max_P = np.amax(P[1:-1,1:-1,i])
-    print(max_P)
+    P_i = P[1:-1,1:-1,i]
+    P_i[P_i == 0 ] = np.nan
+    max_P = np.nanmax(P_i)
+    min_P = np.nanmin(P_i)
+    print(str(round(t[i],8)).ljust(12),max_P,min_P)
     if max_P != 0:
-        P_i = P[1:-1,1:-1,i]/max_P
+        P_i = P_i/101325#max_P
+        # P_i[P_i==0] = np.nan
     else:
         P_i = P[1:-1,1:-1,i]
 
@@ -180,12 +236,14 @@ def animate(i):
         make_plot(fig, my_plot1, x[1:-1], y[1:-1],
               u_i.T,
               v_i.T,
-              plot_type="field",
-              sl_density=[1.0, 0.5],
+              plot_type="streamline",
+              sl_density=[5.0, 0.6],
               sub_type=["u","y"],
-              show_0="x"
+              show_0="x",
+              show_block=None #np.isnan(P_i)
               )
-    except:
+    except Exception as e:
+        print(e)
         pass
     # M = np.hypot(u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T)
     # my_plot1.quiver(x, y, u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T, M, linewidth=0.1, edgecolor=(0,0,0),cmap="jet")
@@ -199,7 +257,10 @@ def animate(i):
               P_i.T,
               plot_type="contourf",
               sl_density=[0.9,1.0],
-              sub_type=[]
+              sub_type=[],
+              norm=True,
+              show_cbar=True,
+              show_block=None ##np.isnan(P_i)
               )
     except Exception as e:
         print(e)
@@ -237,35 +298,8 @@ def animate(i):
     #           )
     # return u[i,1:-1,1:-1]
 
-
-# -15
-# x_vls = np.argwhere(x < 0.02)[-1][0]
-
-x_vls = -1
-
-t_i = len(t)//20
-# t_i = -1
-make_plot(fig, my_plot1,  x[1:x_vls], y[1:-1],
-      u[1:x_vls,1:-1,t_i].T,
-      v[1:x_vls,1:-1,t_i].T,
-      plot_type="streamline",
-      sl_density=[1.0, 0.5],
-      sub_type=["u","y"]
-      # show_0="x"
-      )
-make_plot(fig, my_plot4, x[1:x_vls], y[1:-1],
-      P[1:x_vls,1:-1,t_i].T,
-      P[1:x_vls,1:-1,t_i].T,
-      plot_type="contourf",
-      sl_density=[1.0, 0.5],
-      sub_type=["x", "u"]
-      # show_0="x"
-      )
-# my_plot1.plot(np.mean(u[1:x_vls,1:-1,t_i].T,axis=1),y,'k--',linewidth=3)
-my_plot1.set_title("t = " + str(round(t[t_i],4)) + "s")
-plt.show()
-exit()
-ani = FuncAnimation(fig,animate,frames=(len(t)//skip_num))
+num_frames = (len(t)//(skip_num+1))+1
+ani = FuncAnimation(fig,animate,frames=num_frames)
 
 if show_fig:
     plt.show()
