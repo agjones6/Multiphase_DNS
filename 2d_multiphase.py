@@ -43,10 +43,11 @@ import pickle
 # Class to contain all of the options for input
 oc = option_class()
 oc.pressure_solve = "value"
-oc.output_file = "./Output/hwk5/run_2.h5"
+oc.output_file = "./Output/testing3/run_11.h5"
+oc.output_file = "./Output/hwk5/run_7.h5"
 oc.show_progress = False
 # oc.dt_max = 1e-3
-oc.dt_multiplier = 0.5
+oc.dt_multiplier = 0.1
 oc.min_Ploops = int(20)
 oc.max_Ploops = int(2000)
 oc.Ptol = 1e-3
@@ -65,9 +66,9 @@ elapsed_time = lambda st_t: time.time() - st_t
 
 # Initializing the domain class
 dc = domain_class(N_x=0,
-                  N_y=50,
-                  L_x=0.04, # 1 ft ~= 0.3m
-                  L_y=0.02,
+                  N_y=20,
+                  L_x=0.02, #0.06, # 1 ft ~= 0.3m
+                  L_y=0.01, #0.06,
                   dt = 5e-6,
                   data_type=data_type
                   # dP_x=dP_analytic THis is not used
@@ -81,46 +82,36 @@ dc.dP_y = 0.0
 dc.P = 101325 # atmospheric pressure in pascals
 
 # Initial Velocities
-dc.u_init = 0.02 #0.03 #u_analytic_mean
-dc.v_init = 0.00 #u_analytic_mean
+dc.u_init = 0.0 #0.03 #u_analytic_mean
+dc.v_init = 0.0 #u_analytic_mean
 
 # Setting the time
-dc.T = 30
+dc.T = 5
 dc.N_t = dc.T/dc.dt
 
-dc.top   = "outflow"
+dc.top   = "wall"
 dc.bottom = "wall"
-dc.left  = "source"
-dc.right = "outflow"
+dc.left  = "periodic"
+dc.right = "periodic"
 dc.set_bounds()
 # print(dc.domain_map2)
 
 # Putting a blockage in the flow
-width = dc.L_y/8
-st_x    = int(dc.N_x//3 - (width//dc.h)*0.5)
-en_x = int(st_x+width//dc.h)
-height = dc.L_y/3
-st_y    = 0 #int(dc.N_y//2 - (height//dc.h)*0.5)
-en_y = int(st_y+height//dc.h)
+#   (width, height, angle, [x0,y0])
+# dc.draw_box(0.002, 0.014, 60,[0.0225,0],letter="w")
+# dc.draw_box(0.01, 0.001, 90,[0.02, 0],letter="w")
+# dc.draw_box(dc.L_y/15, dc.L_y/2 ,  0, [dc.L_x/3,dc.L_y/10],letter="f")
 
-width2 = 0.003
-st_x2 = int(dc.N_x//3 + ((width-4*dc.h)//dc.h)*0.5)
-en_x2 = int(st_x2+(width2)//dc.h)
-height2 = 0.001
-st_y2 = int(en_y)
-en_y2 = int(st_y+(height+height2)//dc.h)
-
-# dc.domain_map[st_x:en_x,st_y:en_y] = "w"
-# dc.domain_map[st_x2:en_x2,st_y2:en_y2] = "w"
 
 # Changing the wall numbers
 dc.domain_map[str_index(dc.domain_map,"w")] = "w_0"
 # dc.domain_map[:,-1] = "w_1"
 # print(str_index(dc.domain_map,"w"))
 
+
 # Changing Soure Numbers
 # dc.domain_map[1,:] = "s_0" # Left
-dc.domain_map[dc.domain_map == "s"] = "s_0"
+# dc.domain_map[dc.domain_map == "s"] = "s_0"
 # dc.domain_map[-1,:] = "s_1" # Right
 # dc.domain_map[:,-1] = "s_1" # Top
 
@@ -129,7 +120,7 @@ dc.u_B = [0.0, 0] # 4.69 is the target for
 dc.v_B = [0, 0]
 
 # Source Terms
-dc.u_S    = [0.01, 0.0]
+dc.u_S    = [0.0, 0.0]
 dc.v_S    = [0, 0]
 dc.dP_x_S = [0. , 0]
 dc.dP_y_S = [0., 0.]
@@ -162,6 +153,22 @@ if show_my_domain:
 # Initializing the flow class
 fc = flow_class(dc)
 
+# Defining more than one bubble
+x_b_list = [dc.L_x/4]#,dc.L_x/4]
+y_b_list = [dc.L_y/2]#,dc.L_y/2]
+r_b_list = [dc.L_y/4]#,dc.L_y/4]
+# x_b_list = np.random.uniform(low=0,high=dc.L_x,size=(5))
+# y_b_list = np.random.uniform(low=0,high=dc.L_y,size=(5))
+# r_b_list = np.zeros(x_b_list.size) + dc.L_y/8
+# x_b_list = [0]
+# y_b_list = [0]
+# r_b_list = [0]
+# Defining a level set function and initializing a bubble class
+bc = bubble_class()
+for x_b,y_b,r_b in zip(x_b_list,y_b_list,r_b_list):
+    bc.add_bubble(dc,x_b,y_b,r_b)
+bc.calc_all_psi()
+
 # plt.imshow(dc.C)
 # plt.show()
 # exit()
@@ -181,13 +188,16 @@ u_max = 0.03
 y_min = 0.005
 u_fun = lambda y: (-u_max/y_min**2)*y**2 + u_max
 u_prof = u_fun(dc.y_grid - y_min)
-# for i in range(len(dc.y_grid[1:-1])):
-#     u_ishift[i+1,1:-1] = u_prof[1:-1]
+for i in range(len(dc.x_grid[:])):
+    fc.u_ishift[i,1:-1] = u_prof[1:-1]
+
+fc.u_ishift = set_ghost(dc.dm_ishift, fc.u_ishift, dc.u_B, type="u", source=dc.u_S,h=dc.h)
+fc.u[1:-1,1:-1] = u_new_fun(fc.u_ishift)
 # u_ishift[-1,:] = u_prof
 
 # Defining a class that is used for saving values
-sc = save_class(fc)
-
+sc = save_class(fc,bc)
+# plt.figure()
 while fc.t < dc.T: # and not user_done:
     # --> Checking time step if desired
     if dc.check_dt:
@@ -271,6 +281,18 @@ while fc.t < dc.T: # and not user_done:
     # fc.u_ishift = np.round(fc.u_ishift,6)
     # fc.v_jshift = np.round(fc.v_jshift,6)
 
+    # Handling the level set funciton for the bubble
+    bc.predict_psi(dc,fc)
+    bc.correct_psi(dc,fc)
+    bc.psi = set_ghost(dc.domain_map, bc.psi, dc.u_B, h=dc.h, type="u", source=[0])
+
+    # plt.figure()
+    # plt.contourf(dc.x_grid,dc.y_grid,bc.psi.T)
+    # plt.show()
+    # plt.pause(0.01)
+    # exit()
+
+
     # Getting the unshifted values back out
     fc.u[1:-1,1:-1] = u_new_fun(fc.u_ishift)
     fc.v[1:-1,1:-1] = v_new_fun(fc.v_jshift)
@@ -282,7 +304,7 @@ while fc.t < dc.T: # and not user_done:
     # fc.u = np.round(fc.u,6)
     # fc.v = np.round(fc.v,6)
 
-    sc.save_values(elapsed_time,dc, fc, oc)
+    sc.save_values(elapsed_time,dc, fc, bc, oc)
 
 print("Simulation Completed")
 exit()

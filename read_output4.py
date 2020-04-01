@@ -134,25 +134,16 @@ def make_plot(fig, mp, x, y, u, v, **kwargs):
 
 
 # --> Defining the hdf5 file reading variables
-mb_num = 35
-skip_num = 2
+mb_num = 5
+skip_num = 0
 my_dpi = 100
 my_fps = 60
-my_file    = "./Output/testing2/run_" + str(mb_num) + ".h5"
-video_name = "./Videos/testing2/run_" + str(mb_num) + "_short.mp4"
-
-# Ben Array
-# hkl = np.array([[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],\
-#                 [1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],\
-#                 [1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],\
-#                 [1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0],[1,0,0],[-1,0,0]])
-# print(hkl)
-# print(hkl.shape)
-# exit()
+my_file    = "./Output/hwk5/run_" + str(mb_num) + ".h5"
+video_name = "./Videos/hwk5/run_" + str(mb_num) + ".mp4"
 
 # Options to show a video or save a video
 show_fig = False
-save_fig = True
+save_fig = False
 
 # Making sure the file opens
 num_tries = 0
@@ -183,11 +174,12 @@ t = hf["t"]
 dP_x = hf["dP_x"]
 dP_y = hf["dP_y"]
 P = hf["P"]
+psi = hf["psi"]
 x = hf["x"]
 y = hf["y"]
 
 # Choosing the starting index
-i_start = len(t)//2
+i_start = len(t)//1.5
 i_start = 0
 
 # print(dP_x[5,1:-1,1])
@@ -196,7 +188,7 @@ i_start = 0
 # # plt.figure()
 # # plt.plot(x,dP_x[1:-1,1:-1,-1])
 # plt.figure()
-# plt.plot(u[:,:,-1].T,y)
+# plt.plot(u[:,:,0].T,y)
 # plt.show()
 # exit()
 
@@ -207,6 +199,8 @@ my_plot4 = fig.add_subplot(2,1,2)#,projection='3d')
 # my_plot3 = fig.add_subplot(2,2,4)
 # max_P = np.amax(P[1:-1,1:-1,:])
 # min_P = np.amin(P[1:-1,1:-1,:])
+# my_block = np.isnan(P_i[1:-1,1:-1,2])
+my_block = None
 def animate(i):
 
     # Calculating the index
@@ -218,13 +212,12 @@ def animate(i):
 
     u_i = u[1:-1,1:-1,i]#/np.max(u[:,:,i])
     v_i = v[1:-1,1:-1,i]#/np.max(v[1:-1,1:-1,i])
-    dP_x_i = dP_x[1:-1,1:-1,i]
-    dP_y_i = dP_y[1:-1,1:-1,i]
+    psi_i = psi[1:-1,1:-1,i]
     P_i = P[1:-1,1:-1,i]
     P_i[P_i == 0 ] = np.nan
     max_P = np.nanmax(P_i)
     min_P = np.nanmin(P_i)
-    print(str(round(t[i],8)).ljust(12),max_P,min_P)
+    print(i,str(round(t[i],8)).ljust(12),max_P,min_P)
     if max_P != 0:
         P_i = P_i/101325#max_P
         # P_i[P_i==0] = np.nan
@@ -236,11 +229,11 @@ def animate(i):
         make_plot(fig, my_plot1, x[1:-1], y[1:-1],
               u_i.T,
               v_i.T,
-              plot_type="streamline",
+              plot_type="profile",
               sl_density=[5.0, 0.6],
               sub_type=["u","y"],
               show_0="x",
-              show_block=None #np.isnan(P_i)
+              show_block=my_block
               )
     except Exception as e:
         print(e)
@@ -249,16 +242,37 @@ def animate(i):
     # my_plot1.quiver(x, y, u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T, M, linewidth=0.1, edgecolor=(0,0,0),cmap="jet")
     my_plot1.set_title(str(round(t[i],6)))
 
-    # --> PRESSURE GRADIENT FIELD
+    # --> PRESSURE FIELD
+    # my_plot4.clear()
+    # try:
+    #     make_plot(fig, my_plot4, x[1:-1], y[1:-1],
+    #           P_i.T,
+    #           P_i.T,
+    #           plot_type="contourf",
+    #           sl_density=[0.9,1.0],
+    #           sub_type=[],
+    #           norm=True,
+    #           show_cbar=True,
+    #           show_block=np.isnan(P_i)
+    #           )
+    # except Exception as e:
+    #     print(e)
+    #     exit()
+    #     pass
+
+    # --> Level Set Field
     my_plot4.clear()
+    # psi_i2 = psi_i
+    # psi_i[(psi_i > 0)] = np.nan
+    # psi_i2[(psi_i2 > 0)] = np.nan
     try:
         make_plot(fig, my_plot4, x[1:-1], y[1:-1],
-              P_i.T,
-              P_i.T,
+              psi_i.T,
+              psi_i.T,
               plot_type="contourf",
               sl_density=[0.9,1.0],
               sub_type=[],
-              norm=True,
+              norm=False,
               show_cbar=True,
               show_block=None ##np.isnan(P_i)
               )
@@ -267,40 +281,10 @@ def animate(i):
         exit()
         pass
 
-    # --> PRESSURE GRADIENT FIELD
-    # my_plot4.clear()
-    # try:
-    #     make_plot(fig, my_plot4, x, y,
-    #           dP_x_i.T,
-    #           dP_y_i.T,
-    #           plot_type="field",
-    #           sl_density=[0.9,1.0],
-    #           sub_type=[]
-    #           )
-    # except:
-    #     pass
-
-    # my_plot4.clear()
-    # make_plot(my_plot4, x, y,
-    #           u[:,:,i].T,
-    #           v[:,:,i].T,
-    #           plot_type="profile",
-    #           sub_type=["u","y"],
-    #           show_0="x"
-    #           )
-    #
-    # make_plot(my_plot3, x, y,
-    #           u[i,1:-1,1:-1],
-    #           v[i,1:-1,1:-1],
-    #           plot_type="profile",
-    #           sub_type=["x","v"],
-    #           show_0="y"
-    #           )
-    # return u[i,1:-1,1:-1]
-
 num_frames = (len(t)//(skip_num+1))+1
 ani = FuncAnimation(fig,animate,frames=num_frames)
 
+ani(5)
 if show_fig:
     plt.show()
 if save_fig:

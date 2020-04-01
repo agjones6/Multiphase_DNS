@@ -30,6 +30,7 @@ import matplotlib.pyplot as plt
 import h5py
 from numba import jit, cuda, vectorize, float64, float32, guvectorize
 import copy
+import cv2
 
 # =============================================================================
 #                                 Functions
@@ -581,23 +582,19 @@ def calc_pressure_grad(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
     return dP_x_new, dP_y_new
 
 @jit(["float64[:,:](float64,int32,int32,float64[:,:],float64[:,:],float64[:,:]," +
-            "float64[:,:],float64,float64,float64,float64[:,:],float64[:,:])"],nopython=True,target=my_target)
-def loop_Pressure(tol,max_loops,min_loops,wall_0s,P_old,P_new,
-                    C, rho, h, dt, u_ishift_star, v_jshift_star):
+    "float64[:,:],float64,float64,float64,float64[:,:],float64[:,:])"],nopython=True,target=my_target)
+def loop_Pressure(tol,max_loops,min_loops,wall_0s,P_old,P_new, C, rho, h, dt, u_ishift_star, v_jshift_star):
+    # Values to initialize the loop
     conv = False
     count = 0
 
     while not conv and count < max_loops or count <= min_loops:
         # Calculating the new Pressure scalar field
         P_new[1:-1,1:-1] = P_new_fun(C, P_old, rho, h, dt, u_ishift_star, v_jshift_star)
-        # P_new = set_ghost(dc.domain_map, P_new, dc.u_B, h=dc.h, type="p",source=dc.P_S)
-        # plt.figure()
-        # plt.contourf(P_new)
+
+        # Setting the pressure in the walls to 0
         P_new = P_new*wall_0s
-        # plt.figure()
-        # plt.contourf(P_new)
-        # plt.show()
-        # exit()
+
         # Checking if the current time step converges with the new step
         conv = check_conv(P_old[1:-1,1:-1], P_new[1:-1,1:-1], tol)
 
@@ -638,6 +635,257 @@ def calc_pressure(dc, oc, P, u_ishift_star, v_jshift_star):
 def str_index(map,str):
     map = np.array(map,dtype="str")
     return np.core.defchararray.find(map,str)!=-1
+
+def get_psi(X,Y,x_b,y_b,r_b):
+    # Defining a distance field for one bubble
+    psi = ( (X.T - x_b)**2 + (Y.T - y_b)**2)**0.5 - r_b
+    return psi
+
+class bubble_class:
+    def __init__(self):
+        self.psi_b = []
+        self.x = []
+        self.y = []
+        self.r = []
+        self.N_b = 0
+    def add_bubble(self,dc,x_b,y_b,r_b):
+        # Defining an initial distance field for one bubble
+        self.psi_b.append(get_psi(dc.X,dc.Y,x_b,y_b,r_b))
+        self.x.append(x_b)
+        self.y.append(y_b)
+        self.r.append(r_b)
+        self.N_b += 1
+
+    def calc_all_psi(self):
+        # This gets a continuous level set function for the entire domain
+        self.psi = np.moveaxis(np.array(np.copy(self.psi_b[:])),0,-1)
+        self.psi = np.amin(self.psi,axis=-1)
+
+    def predict_psi(self,dc,fc):
+        # This is the predictor step for the level set function
+        self.Lpsi_fun(dc,fc)
+
+        self.psi_star = self.psi + dc.dt * self.Lpsi
+
+    def correct_psi(self,dc,fc):
+        # This is the corrector step for the level set funcion
+        self.Lpsi_star_fun(dc,fc)
+
+        self.psi = self.psi + (dc.dt/2) * (self.Lpsi + self.Lpsi_star)
+
+
+    def Lpsi_fun(self,dc,fc):
+        # Calculating the neccessary values for Lpsi using the class funcitons
+        self.D_psi_fun()
+        self.M_switch()
+        self.psi_shift_fun(fc)
+
+        self.Lpsi = np.zeros(self.psi.shape)
+        # u = np.zeros(u)
+        # v = np.zeros(v)
+
+        u = u_new_fun(fc.u_ishift)
+        v = v_new_fun(fc.v_jshift)
+
+        self.Lpsi[1:-1,1:-1] = ( -u * (1/dc.h) * (self.psi_ishift[1:-1,1:-1] - self.psi_ishift[:-2,1:-1]) -
+                     v * (1/dc.h) * (self.psi_jshift[1:-1,1:-1] - self.psi_jshift[1:-1,:-2]) )
+
+    def Lpsi_star_fun(self,dc,fc):
+        # Calculating the neccessary values for Lpsi using the class funcitons
+        self.D_psi_star_fun()
+        self.M_switch_star()
+        self.psi_star_shift_fun(fc)
+
+        self.Lpsi_star = np.zeros(self.psi_star.shape)
+        # u = np.zeros(u)
+        # v = np.zeros(v)
+
+        u = u_new_fun(fc.u_ishift)
+        v = v_new_fun(fc.v_jshift)
+
+        self.Lpsi_star[1:-1,1:-1] = ( -u * (1/dc.h) * (self.psi_star_ishift[1:-1,1:-1] - self.psi_star_ishift[:-2,1:-1]) -
+                     v * (1/dc.h) * (self.psi_star_jshift[1:-1,1:-1] - self.psi_star_jshift[1:-1,:-2]) )
+
+    def psi_shift_fun(self,fc):
+        # --> Calculating psi shifted in the i direction (1+1/2,j)
+        # Setting up an array to fill
+        self.psi_ishift = np.zeros(self.psi.shape) + self.psi[:,:]
+        self.psi_jshift = np.zeros(self.psi.shape) + self.psi[:,:]
+
+        # Getting shifted psi values to be used for the extrapolation
+        psi_ishift_temp = np.zeros(self.psi.shape)
+        psi_jshift_temp = np.zeros(self.psi.shape)
+        psi_ishift_temp[:-1,:] = self.psi[1:,:]
+        psi_jshift_temp[:,:-1] = self.psi[:,1:]
+
+        # Getting booleans for the velocity profiles
+        bool_array_i = fc.u_ishift > 0
+        bool_array_j = fc.v_jshift > 0
+
+        # Filling the arrays for positive and negative velocities
+        self.psi_ishift[bool_array_i] = self.psi[bool_array_i] + 0.5 * self.Mi[bool_array_i]
+        self.psi_ishift[~bool_array_i] = psi_ishift_temp[~bool_array_i] - 0.5 * self.Mi_shift[~bool_array_i]
+
+        self.psi_jshift[bool_array_j] = self.psi[bool_array_j] + 0.5 * self.Mj[bool_array_j]
+        self.psi_jshift[~bool_array_j] = psi_jshift_temp[~bool_array_j] - 0.5 * self.Mj_shift[~bool_array_j]
+
+    def psi_star_shift_fun(self,fc):
+        # --> Calculating psi shifted in the i direction (1+1/2,j)
+        # Setting up an array to fill
+        self.psi_star_ishift = np.zeros(self.psi_star.shape) + self.psi_star[:,:]
+        self.psi_star_jshift = np.zeros(self.psi_star.shape) + self.psi_star[:,:]
+
+        # Getting shifted psi values to be used for the extrapolation
+        psi_ishift_temp = np.zeros(self.psi_star.shape)
+        psi_jshift_temp = np.zeros(self.psi_star.shape)
+        psi_ishift_temp[:-1,:] = self.psi_star[1:,:]
+        psi_jshift_temp[:,:-1] = self.psi_star[:,1:]
+
+        # Getting booleans for the velocity profiles
+        bool_array_i = fc.u_ishift > 0
+        bool_array_j = fc.v_jshift > 0
+
+        # Filling the arrays for positive and negative velocities
+        self.psi_star_ishift[bool_array_i] = self.psi_star[bool_array_i] + 0.5 * self.Mi_star[bool_array_i]
+        self.psi_star_ishift[~bool_array_i] = psi_ishift_temp[~bool_array_i] - 0.5 * self.Mi_shift_star[~bool_array_i]
+
+        self.psi_star_jshift[bool_array_j] = self.psi_star[bool_array_j] + 0.5 * self.Mj_star[bool_array_j]
+        self.psi_star_jshift[~bool_array_j] = psi_jshift_temp[~bool_array_j] - 0.5 * self.Mj_shift_star[~bool_array_j]
+
+    def D_psi_fun(self):
+        # Initializing the arrays to the correct dimentsions
+        self.Dpi_psi       = np.zeros(self.psi.shape)# + np.nan
+        self.Dni_psi       = np.zeros(self.psi.shape)# + np.nan
+        self.Dpj_psi       = np.zeros(self.psi.shape)# + np.nan
+        self.Dnj_psi       = np.zeros(self.psi.shape)# + np.nan
+        self.Dpi_shift_psi = np.zeros(self.psi.shape)# + np.nan
+        self.Dni_shift_psi = np.zeros(self.psi.shape)# + np.nan
+        self.Dpj_shift_psi = np.zeros(self.psi.shape)# + np.nan
+        self.Dnj_shift_psi = np.zeros(self.psi.shape)# + np.nan
+
+        # Getting the D psi values centered around i,j
+        self.Dpi_psi[1:-1,1:-1] = self.psi[2:,1:-1] - self.psi[1:-1,1:-1]
+        self.Dni_psi[1:-1,1:-1] = self.psi[1:-1,1:-1] - self.psi[:-2,1:-1]
+        self.Dpj_psi[1:-1,1:-1] = self.psi[1:-1,2:] - self.psi[1:-1,1:-1]
+        self.Dnj_psi[1:-1,1:-1] = self.psi[1:-1,1:-1] - self.psi[1:-1,:-2]
+
+        # Getting the D psi values centered around i+1,j
+        self.Dpi_shift_psi[1:-2,1:-1] = self.psi[3:,1:-1] - self.psi[2:-1,1:-1]
+        self.Dni_shift_psi[1:-1,1:-1] = self.psi[2:,1:-1] - self.psi[1:-1,1:-1]
+        self.Dpj_shift_psi[1:-1,1:-2] = self.psi[1:-1,3:] - self.psi[1:-1,2:-1]
+        self.Dnj_shift_psi[1:-1,1:-1] = self.psi[1:-1,2:] - self.psi[1:-1,1:-1]
+
+        # Combining all of the positive and negative arrays
+        self.Di_psi = np.array([self.Dni_psi,self.Dpi_psi])
+        self.Dj_psi = np.array([self.Dnj_psi,self.Dpj_psi])
+        self.Di_shift_psi = np.array([self.Dni_shift_psi,self.Dpi_shift_psi])
+        self.Dj_shift_psi = np.array([self.Dnj_shift_psi,self.Dpj_shift_psi])
+
+    def D_psi_star_fun(self):
+        # Initializing the arrays to the correct dimentsions
+        self.Dpi_psi_star       = np.zeros(self.psi_star.shape)# + np.nan
+        self.Dni_psi_star       = np.zeros(self.psi_star.shape)# + np.nan
+        self.Dpj_psi_star       = np.zeros(self.psi_star.shape)# + np.nan
+        self.Dnj_psi_star       = np.zeros(self.psi_star.shape)# + np.nan
+        self.Dpi_shift_psi_star = np.zeros(self.psi_star.shape)# + np.nan
+        self.Dni_shift_psi_star = np.zeros(self.psi_star.shape)# + np.nan
+        self.Dpj_shift_psi_star = np.zeros(self.psi_star.shape)# + np.nan
+        self.Dnj_shift_psi_star = np.zeros(self.psi_star.shape)# + np.nan
+
+        # Getting the D psi values centered around i,j
+        self.Dpi_psi_star[1:-1,1:-1] = self.psi_star[2:,1:-1] - self.psi_star[1:-1,1:-1]
+        self.Dni_psi_star[1:-1,1:-1] = self.psi_star[1:-1,1:-1] - self.psi_star[:-2,1:-1]
+        self.Dpj_psi_star[1:-1,1:-1] = self.psi_star[1:-1,2:] - self.psi_star[1:-1,1:-1]
+        self.Dnj_psi_star[1:-1,1:-1] = self.psi_star[1:-1,1:-1] - self.psi_star[1:-1,:-2]
+
+        # Getting the D psi values centered around i+1,j
+        self.Dpi_shift_psi_star[1:-2,1:-1] = self.psi_star[3:,1:-1] - self.psi_star[2:-1,1:-1]
+        self.Dni_shift_psi_star[1:-1,1:-1] = self.psi_star[2:,1:-1] - self.psi_star[1:-1,1:-1]
+        self.Dpj_shift_psi_star[1:-1,1:-2] = self.psi_star[1:-1,3:] - self.psi_star[1:-1,2:-1]
+        self.Dnj_shift_psi_star[1:-1,1:-1] = self.psi_star[1:-1,2:] - self.psi_star[1:-1,1:-1]
+
+        # Combining all of the positive and negative arrays
+        self.Di_psi_star = np.array([self.Dni_psi_star,self.Dpi_psi_star])
+        self.Dj_psi_star = np.array([self.Dnj_psi_star,self.Dpj_psi_star])
+        self.Di_shift_psi_star = np.array([self.Dni_shift_psi_star,self.Dpi_shift_psi_star])
+        self.Dj_shift_psi_star = np.array([self.Dnj_shift_psi_star,self.Dpj_shift_psi_star])
+
+    def M_switch(self):
+        # Establishing a bool array for indexing
+        min_ind_i = np.array(np.zeros(self.Di_psi.shape),dtype=np.bool)
+        min_ind_j = np.array(np.zeros(self.Dj_psi.shape),dtype=np.bool)
+        min_ind_i_shift = np.array(np.zeros(self.Di_shift_psi.shape),dtype=np.bool)
+        min_ind_j_shift = np.array(np.zeros(self.Dj_shift_psi.shape),dtype=np.bool)
+
+        # Preallocating a switch function
+        self.Mi = np.copy(self.Di_psi[0,:,:])
+        self.Mj = np.copy(self.Dj_psi[0,:,:])
+        self.Mi_shift = np.copy(self.Di_shift_psi[0,:,:])
+        self.Mj_shift = np.copy(self.Dj_shift_psi[0,:,:])
+
+        # Getting the absolute minimum values
+        abs_min_i = np.nanmin(np.absolute(self.Di_psi[:,1:-1,1:-1]),axis=0)
+        abs_min_j = np.nanmin(np.absolute(self.Dj_psi[:,1:-1,1:-1]),axis=0)
+        abs_min_i_shift = np.nanmin(np.absolute(self.Di_shift_psi[:,1:-1,1:-1]),axis=0)
+        abs_min_j_shift = np.nanmin(np.absolute(self.Dj_shift_psi[:,1:-1,1:-1]),axis=0)
+
+        # Getting the indexes by using the absolute value of the minimums
+        min_ind_i[:,1:-1,1:-1] = abs_min_i == np.absolute(self.Di_psi[:,1:-1,1:-1])
+        min_ind_j[:,1:-1,1:-1] = abs_min_j == np.absolute(self.Dj_psi[:,1:-1,1:-1])
+        min_ind_i_shift[:,1:-1,1:-1] = abs_min_i_shift == np.absolute(self.Di_shift_psi[:,1:-1,1:-1])
+        min_ind_j_shift[:,1:-1,1:-1] = abs_min_j_shift == np.absolute(self.Dj_shift_psi[:,1:-1,1:-1])
+
+        # Finally putting the final values in the switch function array
+        self.Mi[min_ind_i[0,:,:]] = self.Di_psi[0,min_ind_i[0,:,:]]
+        self.Mi[min_ind_i[1,:,:]] = self.Di_psi[1,min_ind_i[1,:,:]]
+
+        self.Mj[min_ind_j[0,:,:]] = self.Dj_psi[0,min_ind_j[0,:,:]]
+        self.Mj[min_ind_j[1,:,:]] = self.Dj_psi[1,min_ind_j[1,:,:]]
+
+        self.Mi_shift[min_ind_i_shift[0,:,:]] = self.Di_shift_psi[0,min_ind_i_shift[0,:,:]]
+        self.Mi_shift[min_ind_i_shift[1,:,:]] = self.Di_shift_psi[1,min_ind_i_shift[1,:,:]]
+
+        self.Mj_shift[min_ind_j_shift[0,:,:]] = self.Dj_shift_psi[0,min_ind_j_shift[0,:,:]]
+        self.Mj_shift[min_ind_j_shift[1,:,:]] = self.Dj_shift_psi[1,min_ind_j_shift[1,:,:]]
+
+    def M_switch_star(self):
+        # Establishing a bool array for indexing
+        min_ind_i = np.array(np.zeros(self.Di_psi_star.shape),dtype=np.bool)
+        min_ind_j = np.array(np.zeros(self.Dj_psi_star.shape),dtype=np.bool)
+        min_ind_i_shift = np.array(np.zeros(self.Di_shift_psi_star.shape),dtype=np.bool)
+        min_ind_j_shift = np.array(np.zeros(self.Dj_shift_psi_star.shape),dtype=np.bool)
+
+        # Preallocating a switch function
+        self.Mi_star = np.copy(self.Di_psi_star[0,:,:])
+        self.Mj_star = np.copy(self.Dj_psi_star[0,:,:])
+        self.Mi_shift_star = np.copy(self.Di_shift_psi_star[0,:,:])
+        self.Mj_shift_star = np.copy(self.Dj_shift_psi_star[0,:,:])
+
+        # Getting the absolute minimum values
+        abs_min_i = np.nanmin(np.absolute(self.Di_psi_star[:,1:-1,1:-1]),axis=0)
+        abs_min_j = np.nanmin(np.absolute(self.Dj_psi_star[:,1:-1,1:-1]),axis=0)
+        abs_min_i_shift = np.nanmin(np.absolute(self.Di_shift_psi_star[:,1:-1,1:-1]),axis=0)
+        abs_min_j_shift = np.nanmin(np.absolute(self.Dj_shift_psi_star[:,1:-1,1:-1]),axis=0)
+
+        # Getting the indexes by using the absolute value of the minimums
+        min_ind_i[:,1:-1,1:-1] = abs_min_i == np.absolute(self.Di_psi_star[:,1:-1,1:-1])
+        min_ind_j[:,1:-1,1:-1] = abs_min_j == np.absolute(self.Dj_psi_star[:,1:-1,1:-1])
+        min_ind_i_shift[:,1:-1,1:-1] = abs_min_i_shift == np.absolute(self.Di_shift_psi_star[:,1:-1,1:-1])
+        min_ind_j_shift[:,1:-1,1:-1] = abs_min_j_shift == np.absolute(self.Dj_shift_psi_star[:,1:-1,1:-1])
+
+        # Finally putting the final values in the switch function array
+        self.Mi_star[min_ind_i[0,:,:]] = self.Di_psi_star[0,min_ind_i[0,:,:]]
+        self.Mi_star[min_ind_i[1,:,:]] = self.Di_psi_star[1,min_ind_i[1,:,:]]
+
+        self.Mj_star[min_ind_j[0,:,:]] = self.Dj_psi_star[0,min_ind_j[0,:,:]]
+        self.Mj_star[min_ind_j[1,:,:]] = self.Dj_psi_star[1,min_ind_j[1,:,:]]
+
+        self.Mi_shift_star[min_ind_i_shift[0,:,:]] = self.Di_shift_psi_star[0,min_ind_i_shift[0,:,:]]
+        self.Mi_shift_star[min_ind_i_shift[1,:,:]] = self.Di_shift_psi_star[1,min_ind_i_shift[1,:,:]]
+
+        self.Mj_shift_star[min_ind_j_shift[0,:,:]] = self.Dj_shift_psi_star[0,min_ind_j_shift[0,:,:]]
+        self.Mj_shift_star[min_ind_j_shift[1,:,:]] = self.Dj_shift_psi_star[1,min_ind_j_shift[1,:,:]]
+
 
 class domain_class:
     def __init__(self, **kwargs):
@@ -715,6 +963,9 @@ class domain_class:
         # self.y_grid = np.arange(0-self.h/2,self.L_y+self.h/2,self.h)
         self.x_grid = np.linspace(0-self.h/2,self.L_x+self.h/2,int(self.N_x + 2))
         self.y_grid = np.linspace(0-self.h/2,self.L_y+self.h/2,int(self.N_y + 2))
+        self.X,self.Y = np.meshgrid(self.x_grid,self.y_grid)
+        # self.X = X
+        # self.Y = Y
 
         print(len(self.x_grid),len(self.y_grid))
         # Converting the Number of Nodes to integers
@@ -753,6 +1004,95 @@ class domain_class:
         dum_map = np.copy(self.domain_map)
         self.dm_ishift = shift_dm(dum_map,"i")
         self.dm_jshift = shift_dm(dum_map,"j")
+
+    def draw_box(self,w,h, angle, origin,**kwargs):
+        # This function is designed to draw a box on the domain with a given heighth.
+        #   width, and angle. The origin of the box is the bottom left of the box
+        letter = kwargs.get("letter","w")
+
+        # Converting the angle to radians
+        theta = (angle/360) * 2*np.pi
+
+        # Defining the width and height in terms of the 'pixelated' domain
+        w = w/self.h
+        h = h/self.h
+        # print(w,h)
+
+        # Defining the 4 corners of the box
+        P0 = origin/self.h
+        P1 = P0 + [h*np.cos(theta), h * np.sin(theta)]
+        P3 = P0 + [w*np.cos(theta - np.pi/2),  w * np.sin(theta - np.pi/2)]
+        P2 = -P0 + P1 + P3
+        P = np.array([P0,P1,P2,P3])
+
+        L = []
+        slp = []
+        if angle < 90 and angle > 0:
+            for i in range(len(P)):
+                # Defining slopes
+                slp.append( (P[i,1] - P[i-1,1])/(P[i,0] - P[i-1,0]))
+
+                # This makes an equation to get the line x,y with any given index
+                dum_eq = lambda x,y, i=i: np.array([P[i-1,0] + (y-P[i-1,1]) * (1/slp[i]), P[i-1,1] + (x-P[i-1,0])*slp[i]])
+
+                # Output of the line is [x_inp,y_inp,(x,y)]
+                #   -> L[0,:,:] = all x values
+                #   -> L[1,:,:] = all y values
+                L.append(dum_eq)
+        elif angle == 90:
+            for i in range(len(P)):
+                if i == 0 or i == 2:
+                    dum_eq = lambda x,y,i=i: np.array([x, P[i-1,1] + x * 0.])
+                elif i == 1 or i == 3:
+                    dum_eq = lambda x,y,i=i: np.array([P[i-1,0] + y * 0., y])
+                # This makes an equation to get the line x,y with any given index
+                # dum_eq = lambda x,y, i=i: np.array([P[i-1,0] + (y-P[i-1,1]) * (1/slp[i]), P[i-1,1] + (x-P[i-1,0])*slp[i]])
+
+                # Output of the line is [x_inp,y_inp,(x,y)]
+                #   -> L[0,:,:] = all x values
+                #   -> L[1,:,:] = all y values
+                L.append(dum_eq)
+        elif angle == 0:
+            for i in range(len(P)):
+                if i == 1 or i == 3:
+                    dum_eq = lambda x,y,i=i: np.array([x, P[i-1,1] + x * 0.])
+                elif i == 0 or i == 2:
+                    dum_eq = lambda x,y,i=i: np.array([P[i-1,0] + y * 0., y])
+                # This makes an equation to get the line x,y with any given index
+                # dum_eq = lambda x,y, i=i: np.array([P[i-1,0] + (y-P[i-1,1]) * (1/slp[i]), P[i-1,1] + (x-P[i-1,0])*slp[i]])
+
+                # Output of the line is [x_inp,y_inp,(x,y)]
+                #   -> L[0,:,:] = all x values
+                #   -> L[1,:,:] = all y values
+                L.append(dum_eq)
+
+
+        # Getting a mesh of the grid indices flip([1].T) = y, [1].T = x
+        grid = np.indices(self.domain_map.shape)
+        x = grid[0]
+        y = grid[1]
+        # tst = L[0](x,y)
+        # print(tst.shape)
+        # print(x)
+        # print(y)
+        # dmn = np.logical_and(x.T > tst[:,:,0])#, y.T < tst[:,:,1])
+        logic0 = np.logical_and(y >= L[0](x,y)[1,:,:], x >= L[0](x,y)[0,:,:])
+        logic1 = np.logical_and(y <= L[1](x,y)[1,:,:], x >= L[1](x,y)[0,:,:])
+        logic2 = np.logical_and(y <= L[2](x,y)[1,:,:], x <= L[2](x,y)[0,:,:])
+        logic3 = np.logical_and(y >= L[3](x,y)[1,:,:], x <= L[3](x,y)[0,:,:])
+        logic_all = np.logical_and(np.logical_and(np.logical_and(
+                             logic0,
+                             logic1),
+                             logic2),
+                             logic3)
+
+        # Changing the domain map
+        self.domain_map[logic_all] = letter
+
+        # plt.contourf(logic_all.T)
+        # plt.show()
+        #
+        # exit()
 
     def check_dtype(self):
         if self.data_type == "float64":
@@ -832,7 +1172,7 @@ class flow_class:
         self.v[1:-1,1:-1] = v_new_fun(self.v_jshift)
 
 class save_class:
-    def __init__(self,flow_class):
+    def __init__(self,flow_class, bubble_class):
         # Creating lists to store all of the variables
         numpy_dtype = np.float32
         self.u_list = np.array(flow_class.u, dtype=numpy_dtype)
@@ -841,11 +1181,13 @@ class save_class:
         self.dP_x_list = np.array(flow_class.dP_x, dtype=numpy_dtype)
         self.dP_y_list = np.array(flow_class.dP_y, dtype=numpy_dtype)
         self.P_list = np.array(flow_class.P, dtype=numpy_dtype)
+        self.psi_list = np.array(bubble_class.psi, dtype=numpy_dtype)
+
 
         # This is a counting variable for saving hdf5 file
         self.save_count = 0
 
-    def save_values(self,elapsed_time, dc,fc,oc):
+    def save_values(self,elapsed_time, dc,fc,bc,oc):
         # Appending values to the lists for storage
         self.u_list = np.dstack((self.u_list, fc.u))
         self.v_list = np.dstack((self.v_list, fc.v))
@@ -853,10 +1195,11 @@ class save_class:
         self.dP_x_list = np.dstack((self.dP_x_list, fc.dP_x))
         self.dP_y_list = np.dstack((self.dP_y_list, fc.dP_y))
         self.P_list = np.dstack((self.P_list, fc.P))
+        self.psi_list = np.dstack((self.psi_list, bc.psi))
 
         # Calculating the size of all of the arrays
         current_size = (self.u_list.nbytes + self.v_list.nbytes +
-                        self.dP_x_list.nbytes + self.dP_y_list.nbytes + self.P_list.nbytes)
+                        self.dP_x_list.nbytes + self.dP_y_list.nbytes + self.P_list.nbytes + self.psi_list.nbytes)
 
         # Saving an HDF5 File if the size of the arrays reaches a certain number of bytes
         #   or the write interval is reached
@@ -870,6 +1213,7 @@ class save_class:
                 hf.create_dataset("dP_x", data=self.dP_x_list, maxshape=(fc.u.shape[0],fc.u.shape[1],None), compression="gzip", chunks=True)
                 hf.create_dataset("dP_y", data=self.dP_y_list, maxshape=(fc.v.shape[0],fc.v.shape[1],None), compression="gzip", chunks=True)
                 hf.create_dataset("P", data=self.P_list, maxshape=(fc.u.shape[0],fc.u.shape[1],None), compression="gzip", chunks=True)
+                hf.create_dataset("psi", data=self.psi_list, maxshape=(fc.u.shape[0],fc.u.shape[1],None), compression="gzip", chunks=True)
                 hf.create_dataset("t", data=self.t_list, maxshape=(None,), compression="gzip", chunks=True)
 
                 hf.create_dataset("x", data=dc.x_grid, maxshape=dc.x_grid.shape, compression="gzip")
@@ -879,6 +1223,8 @@ class save_class:
                 self.v_list = self.v_list[:,:,-1]
                 self.dP_x_list = self.dP_x_list[:,:,-1]
                 self.dP_y_list = self.dP_y_list[:,:,-1]
+                self.P_list = self.P_list[:,:,-1]
+                self.psi_list = self.psi_list[:,:,-1]
                 self.t_list = [-1]
             else:
                 # --> This opens the file and appends to the current arrays
@@ -904,6 +1250,10 @@ class save_class:
                 hf["P"].resize(hf["P"].shape[2] + self.P_list.shape[2]-1, axis=2)
                 hf["P"][:,:,-(self.P_list.shape[2]-1):] = self.P_list[:,:,1:]
                 self.P_list = self.P_list[:,:,-1]
+
+                hf["psi"].resize(hf["psi"].shape[2] + self.psi_list.shape[2]-1, axis=2)
+                hf["psi"][:,:,-(self.psi_list.shape[2]-1):] = self.psi_list[:,:,1:]
+                self.psi_list = self.psi_list[:,:,-1]
 
                 hf["t"].resize(hf["t"].shape[0] + self.t_list.shape[0]-1, axis=0)
                 hf["t"][-(self.t_list.shape[0]-1):] = self.t_list[1:]
