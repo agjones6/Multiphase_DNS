@@ -59,11 +59,11 @@ def dP_y_new_fun(C, dP_y, rho, h, dt, u_ishift_star, v_ishift_star):
                   - (u_ishift_star[:-2,2:]    - u_ishift_star[:-2,1:-1]) ))
 
 # Absolute pressure calculation
-@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "[:,:]," + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + "[:,:])"],
       nopython=True, target=my_target)
 def P_new_fun(C, P, rho, h, dt, u_ishift_star, v_ishift_star):
     return (1/C[1:-1,1:-1]) * (P[2:,1:-1] + P[:-2,1:-1] + P[1:-1,2:] + P[1:-1,:-2]
-                  - (rho * h/dt)*(
+                  - (rho[1:-1,1:-1] * h/dt)*(
                     (u_ishift_star[1:-1,1:-1] - u_ishift_star[:-2,1:-1])
                   + (v_ishift_star[1:-1,1:-1] - v_ishift_star[1:-1,:-2]) ))
 
@@ -88,12 +88,13 @@ def D_fun(h,vel):
     return (1/h**2) * ( vel[2:,1:-1] + vel[:-2,1:-1] + vel[1:-1,2:] + vel[1:-1,:-2] - 4*vel[1:-1,1:-1])
 
 
-@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "," + data_type + "[:,:]," + data_type + "," + data_type + "[:,:])"],
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "," +
+     data_type + "[:,:]," + data_type + "[:,:]," + data_type + "[:,:]," + data_type + "[:,:])"],
       nopython=True, target=my_target)
-def vel_star(vel, dt, A, nu, D):
-    return vel + dt * ( -A + nu * D )
+def vel_star(vel, dt, A, nu, D,F_gamma):
+    return vel + dt * ( -A + nu * D + F_gamma )
 
-@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "," + data_type + "," + data_type + "," + data_type + "[:,:]," + data_type + ")"],
+@jit(["" + data_type + "[:,:](" + data_type + "[:,:]," + data_type + "," + data_type + "[:,:]," + data_type + "," + data_type + "[:,:]," + data_type + ")"],
       nopython=True, target=my_target)
 def vel_ishift_fun(vel_ishift_star, dt, rho, h, dP, F):
     return vel_ishift_star - (dt/(rho*h)) * dP * h + F # I took the h out of dP
@@ -423,6 +424,37 @@ def set_ghost(map, val, u_B=0, **kwargs):
             # if not "f" in cm:
             #     val[i,j] = 0
 
+        elif type.lower() == "psi":
+            # Setting periodic Boundaries
+            if "p" in cm:# or "o" in cm:
+                f_ind = find_fluid(map,[i,j],adj=-2)
+                x_i,y_i = f_ind
+                if x_i > num_i:
+                    x_i = x_i-num_i
+                if y_i > num_j:
+                    y_i = y_i-num_j
+                if x_i < 0:
+                    x_i = x_i + num_i
+                if y_i < 0:
+                    y_i = y_i + num_j
+
+                val[i,j] = val0[x_i,y_i]
+
+            elif "w" in cm:
+                f_ind = find_fluid(map,[i,j],adj=1)
+                x_i,y_i = f_ind
+                if x_i > num_i:
+                    x_i = x_i-num_i
+                if y_i > num_j:
+                    y_i = y_i-num_j
+                if x_i < 0:
+                    x_i = x_i + num_i
+                if y_i < 0:
+                    y_i = y_i + num_j
+
+                val[i,j] = val0[x_i,y_i]
+
+
         elif type.lower() == "u":
             # Setting the wall ghost cells
             if "w" in cm:
@@ -582,7 +614,7 @@ def calc_pressure_grad(dc, dP_x, dP_y, u_ishift_star, v_ishift_star):
     return dP_x_new, dP_y_new
 
 @jit(["float64[:,:](float64,int32,int32,float64[:,:],float64[:,:],float64[:,:]," +
-    "float64[:,:],float64,float64,float64,float64[:,:],float64[:,:])"],nopython=True,target=my_target)
+    "float64[:,:],float64[:,:],float64,float64,float64[:,:],float64[:,:])"],nopython=True,target=my_target)
 def loop_Pressure(tol,max_loops,min_loops,wall_0s,P_old,P_new, C, rho, h, dt, u_ishift_star, v_jshift_star):
     # Values to initialize the loop
     conv = False
@@ -593,7 +625,7 @@ def loop_Pressure(tol,max_loops,min_loops,wall_0s,P_old,P_new, C, rho, h, dt, u_
         P_new[1:-1,1:-1] = P_new_fun(C, P_old, rho, h, dt, u_ishift_star, v_jshift_star)
 
         # Setting the pressure in the walls to 0
-        P_new = P_new*wall_0s
+        P_new = np.absolute(P_new)*wall_0s
 
         # Checking if the current time step converges with the new step
         conv = check_conv(P_old[1:-1,1:-1], P_new[1:-1,1:-1], tol)
@@ -608,7 +640,7 @@ def loop_Pressure(tol,max_loops,min_loops,wall_0s,P_old,P_new, C, rho, h, dt, u_
 
     return P_new
 
-def calc_pressure(dc, oc, P, u_ishift_star, v_jshift_star):
+def calc_pressure(dc, oc, rho, P, u_ishift_star, v_jshift_star):
 
     # Tolerance for convergence
     min_loops=oc.min_Ploops
@@ -628,7 +660,7 @@ def calc_pressure(dc, oc, P, u_ishift_star, v_jshift_star):
     # exit()
 
     P_new = loop_Pressure(tol,max_loops, min_loops,wall_0s,P_old,P_new,
-                dc.C, dc.rho, dc.h, dc.dt, u_ishift_star, v_jshift_star)
+                dc.C, rho, dc.h, dc.dt, u_ishift_star, v_jshift_star)
 
     return np.copy(P_new)
 
@@ -641,13 +673,61 @@ def get_psi(X,Y,x_b,y_b,r_b):
     psi = ( (X.T - x_b)**2 + (Y.T - y_b)**2)**0.5 - r_b
     return psi
 
+def sgn_Mh(psi,M,h):
+    val = np.zeros(psi.shape)
+    val[psi>=(M*h)] = 1
+    val[psi<=(-M*h)] = -1
+    val[val==0] = psi[val==0]/(M*h) - (1/np.pi)*np.sin(np.pi*psi[val==0]/(M*h))
+    return val
+
+def sgn(psi):
+    val = np.copy(psi[:,:])
+    val[val!=0] = val[val!=0] / np.absolute(val[val!=0])
+    return val
+
+def update_properties(f,prop_l,prop_g):
+    return f[:,:]*prop_l + (1-f[:,:])*prop_g
+# Function for calculating the f(psi) using a variable M value
+def get_f(M,h,psi,f):
+    # Creating an array of logical statements used in the piecewise function
+    cond1 = psi < -M*h
+    cond2 = psi > M * h
+    cond3 = ~np.logical_xor(cond1,cond2)
+
+    # Using the conditionals to calulate an f(psi)
+    f[cond1] = 0
+    f[cond2] = 1
+    f[cond3] = (0.5) * (1 + psi[cond3]/(M*h) + (1/np.pi)*np.sin(np.pi*(psi[cond3]/(M*h))))
+
+    return f
+
 class bubble_class:
-    def __init__(self):
+    def __init__(self,u):
         self.psi_b = []
+        self.psi_d = []
         self.x = []
         self.y = []
         self.r = []
         self.N_b = 0
+
+        # Pre-allocation
+        self.dpsi_dx = np.zeros(u.shape)
+        self.dpsi_dy = np.zeros(u.shape)
+        self.f = np.zeros(u.shape)
+        self.f_ishift = np.zeros(u.shape)
+        self.f_jshift = np.zeros(u.shape)
+        self.df_dpsi_x = np.zeros(u.shape)
+        self.df_dpsi_y = np.zeros(u.shape)
+        self.kappa = np.zeros(u.shape)
+        self.psi_x = np.zeros(u.shape)
+        self.psi_y = np.zeros(u.shape)
+        self.dpsi_dx_jshift = np.zeros(u.shape)
+        self.dpsi_dy_ishift = np.zeros(u.shape)
+        self.kappa_ishift = np.zeros(u.shape)
+        self.kappa_jshift = np.zeros(u.shape)
+        self.df_dpsi_ian = np.zeros(u.shape)
+        self.df_dpsi_jan = np.zeros(u.shape)
+
     def add_bubble(self,dc,x_b,y_b,r_b):
         # Defining an initial distance field for one bubble
         self.psi_b.append(get_psi(dc.X,dc.Y,x_b,y_b,r_b))
@@ -656,7 +736,20 @@ class bubble_class:
         self.r.append(r_b)
         self.N_b += 1
 
-    def calc_all_psi(self):
+    def add_droplet(self,dc,x_b,y_b,r_b):
+        # Defining an initial distance field for one bubble
+        self.psi_d.append(-1*get_psi(dc.X,dc.Y,x_b,y_b,r_b))
+        self.x.append(x_b)
+        self.y.append(y_b)
+        self.r.append(r_b)
+        self.N_b += 1
+
+    def calc_all_psi_d(self):
+        # This gets a continuous level set function for the entire domain
+        self.psi = np.moveaxis(np.array(np.copy(self.psi_d[:])),0,-1)
+        self.psi = np.amax(self.psi,axis=-1)
+
+    def calc_all_psi_b(self):
         # This gets a continuous level set function for the entire domain
         self.psi = np.moveaxis(np.array(np.copy(self.psi_b[:])),0,-1)
         self.psi = np.amin(self.psi,axis=-1)
@@ -672,7 +765,6 @@ class bubble_class:
         self.Lpsi_star_fun(dc,fc)
 
         self.psi = self.psi + (dc.dt/2) * (self.Lpsi + self.Lpsi_star)
-
 
     def Lpsi_fun(self,dc,fc):
         # Calculating the neccessary values for Lpsi using the class funcitons
@@ -709,14 +801,14 @@ class bubble_class:
     def psi_shift_fun(self,fc):
         # --> Calculating psi shifted in the i direction (1+1/2,j)
         # Setting up an array to fill
-        self.psi_ishift = np.zeros(self.psi.shape) + self.psi[:,:]
-        self.psi_jshift = np.zeros(self.psi.shape) + self.psi[:,:]
+        self.psi_ishift = np.zeros(self.psi.shape) + np.copy(self.psi[:,:])
+        self.psi_jshift = np.zeros(self.psi.shape) + np.copy(self.psi[:,:])
 
         # Getting shifted psi values to be used for the extrapolation
         psi_ishift_temp = np.zeros(self.psi.shape)
         psi_jshift_temp = np.zeros(self.psi.shape)
-        psi_ishift_temp[:-1,:] = self.psi[1:,:]
-        psi_jshift_temp[:,:-1] = self.psi[:,1:]
+        psi_ishift_temp[:-1,:] = np.copy(self.psi[1:,:])
+        psi_jshift_temp[:,:-1] = np.copy(self.psi[:,1:])
 
         # Getting booleans for the velocity profiles
         bool_array_i = fc.u_ishift > 0
@@ -738,8 +830,8 @@ class bubble_class:
         # Getting shifted psi values to be used for the extrapolation
         psi_ishift_temp = np.zeros(self.psi_star.shape)
         psi_jshift_temp = np.zeros(self.psi_star.shape)
-        psi_ishift_temp[:-1,:] = self.psi_star[1:,:]
-        psi_jshift_temp[:,:-1] = self.psi_star[:,1:]
+        psi_ishift_temp[:-1,:] = np.copy(self.psi_star[1:,:])
+        psi_jshift_temp[:,:-1] = np.copy(self.psi_star[:,1:])
 
         # Getting booleans for the velocity profiles
         bool_array_i = fc.u_ishift > 0
@@ -886,6 +978,526 @@ class bubble_class:
         self.Mj_shift_star[min_ind_j_shift[0,:,:]] = self.Dj_shift_psi_star[0,min_ind_j_shift[0,:,:]]
         self.Mj_shift_star[min_ind_j_shift[1,:,:]] = self.Dj_shift_psi_star[1,min_ind_j_shift[1,:,:]]
 
+    def calc_f_arr(self,M,h):
+        self.f[1:-1,1:-1] = get_f(M,h,self.psi[1:-1,1:-1],self.f[1:-1,1:-1])
+        self.f_ishift[1:-1,1:-1] = get_f(M,h,self.psi_ishift[1:-1,1:-1],self.f_ishift[1:-1,1:-1])
+        self.f_jshift[1:-1,1:-1] = get_f(M,h,self.psi_jshift[1:-1,1:-1],self.f_jshift[1:-1,1:-1])
+
+    def calc_f_der_an(self,M,h):
+        # Calculating the analytic derivative of df(psi)/dpsi
+        cond1_i = np.logical_xor(self.f_ishift == 0, self.f_ishift ==1)
+        self.df_dpsi_ian[cond1_i] = 0
+        self.df_dpsi_ian[~cond1_i] = 0.5 * (1/(M * h) + (1/(M*h))*np.cos(np.pi*self.psi_ishift[~cond1_i]/(M*h)))
+
+        cond1_j = np.logical_xor(self.f_jshift == 0, self.f_jshift ==1)
+        self.df_dpsi_jan[cond1_j] = 0
+        self.df_dpsi_jan[~cond1_j] = 0.5 * (1/(M * h) + (1/(M*h))*np.cos(np.pi*self.psi_jshift[~cond1_j]/(M*h)))
+
+    def calc_f_der(self):
+        # This gets the derivative of df/dpsi in the x and y directions centered
+        #   about (i+1/2,j) and (i,j+1/2)
+        self.df_dpsi_x[1:-1,:] = (self.f[2:,:] - self.f[1:-1,:])/(self.psi[2:,:] - self.psi[1:-1,:])
+        self.df_dpsi_y[:,1:-1] = (self.f[:,2:] - self.f[:,1:-1])/(self.psi[:,2:] - self.psi[:,1:-1])
+
+    def get_psi_grad(self,h):
+        # This calculates the gradients of psi in the x and y direction
+        #   NOTE: They are centered about (i+1/2,j) and (i,j+1/2)
+        self.dpsi_dx[1:-1,:] = (self.psi[2:,:] - self.psi[1:-1,:])/h
+        self.dpsi_dy[:,1:-1] = (self.psi[:,2:] - self.psi[:,1:-1])/h
+
+    def calc_kappa(self,h):
+        # Calculating the gradients centered about (i+1/2,j+1/2)
+        self.dpsi_dx_jshift[:,1:-1] = 0.5*(self.dpsi_dx[:,2:] + self.dpsi_dx[:,1:-1])
+        self.dpsi_dy_ishift[1:-1,:] = 0.5*(self.dpsi_dy[2:,:] + self.dpsi_dy[1:-1,:])
+
+        # Calculating the magnitude of the shifted gradients centered at (i+1/2,j+1/2)
+        mag_psi_grad = ( (self.dpsi_dx_jshift[:,:])**2 + (self.dpsi_dy_ishift[:,:])**2 )**0.5
+        mag_psi_grad[mag_psi_grad==0] = np.nan
+
+        # Calculating the psi_x and psi_y terms centered at (i+1/2,j+1/2)
+        self.psi_x[1:-1,1:-1] = (self.psi[2:,2:] + self.psi[2:,1:-1] - self.psi[1:-1,2:] - self.psi[1:-1,1:-1])*(1/(2*h))
+        self.psi_y[1:-1,1:-1] = (self.psi[2:,2:] - self.psi[2:,1:-1] + self.psi[1:-1,2:] - self.psi[1:-1,1:-1])*(1/(2*h))
+
+        # Calculating Kappa
+        self.kappa[1:-1,1:-1] = ( (self.psi_x[1:-1,1:-1]/mag_psi_grad[1:-1,1:-1])
+                                + (self.psi_x[1:-1, :-2]/mag_psi_grad[1:-1, :-2])
+                                - (self.psi_x[ :-2,1:-1]/mag_psi_grad[ :-2,1:-1])
+                                - (self.psi_x[ :-2, :-2]/mag_psi_grad[ :-2, :-2])
+                                + (self.psi_y[1:-1,1:-1]/mag_psi_grad[1:-1,1:-1])
+                                - (self.psi_y[1:-1, :-2]/mag_psi_grad[1:-1, :-2])
+                                + (self.psi_y[ :-2,1:-1]/mag_psi_grad[ :-2,1:-1])
+                                - (self.psi_y[ :-2, :-2]/mag_psi_grad[ :-2, :-2]) ) * (1/(2*h))
+
+        # Calculating the shifted kappa values
+        self.kappa_ishift[1:-1,:] = 0.5*(self.kappa[2:,:] + self.kappa[1:-1,:])
+        self.kappa_jshift[:,1:-1] = 0.5*(self.kappa[:,2:] + self.kappa[:,1:-1])
+
+    def calc_F_gamma(self,gamma,M,h):
+        # Calculating a f array for determining fluid properties
+        # self.calc_f_arr(M,h)
+
+        # Calculating a gradient in both directions for psi
+        self.get_psi_grad(h)
+
+        # Calculating the derivative of f
+        # self.calc_f_der()
+        self.calc_f_der_an(M,h)
+
+        # Calculating Kappa
+        self.calc_kappa(h)
+
+        # Getting the final Force values
+        self.F_gamma_x = -gamma*self.kappa_ishift*self.df_dpsi_ian[:,:]*self.dpsi_dx[:,:]
+        self.F_gamma_x[np.isnan(self.F_gamma_x)] = 0
+        self.F_gamma_x[np.logical_xor(self.f == 0,self.f==1)] = 0
+        self.F_gamma_y = -gamma*self.kappa_jshift*self.df_dpsi_jan[:,:]*self.dpsi_dy[:,:]
+        self.F_gamma_y[np.isnan(self.F_gamma_y)] = 0
+        self.F_gamma_y[np.logical_xor(self.f == 0,self.f==1)] = 0
+
+class distance_field:
+    def __init__(self,M,bc,dc):
+        self.M = M
+        self.psi = np.copy(bc.psi[:,:])
+        self.tou = 0
+        self.dtou = dc.h/2
+        self.num_loops = 2*self.M
+
+        # Initializing the sgn and sgn_Mh arrays
+        self.sgn_psi = sgn(self.psi[:,:])
+        self.sgn_Mh_psi = sgn_Mh(self.psi[:,:],M,dc.h)
+
+        # Initializing the arrays to the correct dimentsions
+        self.DDi_psi       = np.zeros(self.psi.shape)# + np.nan
+        self.DDj_psi       = np.zeros(self.psi.shape)# + np.nan
+        self.DDi_pshift_psi = np.zeros(self.psi.shape)# + np.nan
+        self.DDi_nshift_psi = np.zeros(self.psi.shape)# + np.nan
+        self.DDj_pshift_psi = np.zeros(self.psi.shape)# + np.nan
+        self.DDj_nshift_psi = np.zeros(self.psi.shape)# + np.nan
+
+        # Preallocating a switch function
+        self.Mi_p = np.zeros(self.psi.shape)
+        self.Mj_p = np.zeros(self.psi.shape)
+        self.Mi_n = np.zeros(self.psi.shape)
+        self.Mj_n = np.zeros(self.psi.shape)
+
+        # Preallocating the D tilda array
+        self.Di_ptilda = np.zeros(self.psi.shape)
+        self.Dj_ptilda = np.zeros(self.psi.shape)
+        self.Di_ntilda = np.zeros(self.psi.shape)
+        self.Dj_ntilda = np.zeros(self.psi.shape)
+
+        self.Di_tilda = np.zeros(self.psi.shape)
+        self.Dj_tilda = np.zeros(self.psi.shape)
+
+        self.Lpsi = np.zeros(self.psi.shape)
+
+        #-->  Preallocation of Star arrays
+        self.psi_star = np.zeros(self.psi.shape)
+
+        # Initializing the sgn and sgn_Mh arrays
+        self.sgn_psi_star = sgn(self.psi[:,:])
+        self.sgn_Mh_psi_star = sgn_Mh(self.psi[:,:],M,dc.h)
+
+        self.DDi_psi_star       = np.zeros(self.psi.shape)# + np.nan
+        self.DDj_psi_star       = np.zeros(self.psi.shape)# + np.nan
+        self.DDi_pshift_psi_star = np.zeros(self.psi.shape)# + np.nan
+        self.DDi_nshift_psi_star = np.zeros(self.psi.shape)# + np.nan
+        self.DDj_pshift_psi_star = np.zeros(self.psi.shape)# + np.nan
+        self.DDj_nshift_psi_star = np.zeros(self.psi.shape)# + np.nan
+
+        # Preallocating a switch function
+        self.Mi_p_star = np.zeros(self.psi.shape)
+        self.Mj_p_star = np.zeros(self.psi.shape)
+        self.Mi_n_star = np.zeros(self.psi.shape)
+        self.Mj_n_star = np.zeros(self.psi.shape)
+
+        # Preallocating the D tilda array
+        self.Di_ptilda_star = np.zeros(self.psi.shape)
+        self.Dj_ptilda_star = np.zeros(self.psi.shape)
+        self.Di_ntilda_star = np.zeros(self.psi.shape)
+        self.Dj_ntilda_star = np.zeros(self.psi.shape)
+
+        self.Di_tilda_star = np.zeros(self.psi.shape)
+        self.Dj_tilda_star = np.zeros(self.psi.shape)
+
+        self.Lpsi_star = np.zeros(self.psi.shape)
+
+        # Pre-allocation
+        self.dpsi_dx = np.zeros(self.psi.shape)
+        self.dpsi_dy = np.zeros(self.psi.shape)
+        self.f = np.zeros(self.psi.shape)
+        self.f_ishift = np.zeros(self.psi.shape)
+        self.f_jshift = np.zeros(self.psi.shape)
+        self.df_dpsi_x = np.zeros(self.psi.shape)
+        self.df_dpsi_y = np.zeros(self.psi.shape)
+        self.df_dpsi_ian = np.zeros(self.psi.shape)
+        self.df_dpsi_jan = np.zeros(self.psi.shape)
+        self.kappa = np.zeros(self.psi.shape)
+        self.psi_x = np.zeros(self.psi.shape)
+        self.psi_y = np.zeros(self.psi.shape)
+        self.dpsi_dx_jshift = np.zeros(self.psi.shape)
+        self.dpsi_dy_ishift = np.zeros(self.psi.shape)
+        self.kappa_ishift = np.zeros(self.psi.shape)
+        self.kappa_jshift = np.zeros(self.psi.shape)
+
+    def predict_psi(self,dc,fc):
+        # This is the predictor step for the level set function
+        self.Lpsi_fun(dc,fc)
+
+        # Predicting the level set distance function
+        self.psi_star[:,:] = self.psi[:,:] + self.dtou * self.Lpsi[:,:]
+
+    def correct_psi(self,dc,fc):
+        # Calculating the lpsi from the predictor level set function
+        self.Lpsi_star_fun(dc,fc)
+
+        # Correcting the level set distance function
+        self.psi[:,:] = self.psi[:,:] + (self.dtou/2) * (self.Lpsi[:,:] + self.Lpsi_star[:,:])
+
+        # Calculating the shifted psi values
+        self.psi_ishift = np.copy(self.psi[:,:])
+        self.psi_jshift = np.copy(self.psi[:,:])
+        self.psi_ishift[1:-1,1:-1] = 0.5 * (self.psi_ishift[2:,1:-1] + self.psi_ishift[1:-1,1:-1])
+        self.psi_jshift[1:-1,1:-1] = 0.5 * (self.psi_jshift[1:-1,2:] + self.psi_jshift[1:-1,1:-1])
+
+    def Lpsi_fun(self,dc,fc):
+        # Calculating the neccessary values for Lpsi using the class funcitons
+        self.sgn_psi[:,:] = sgn(self.psi[:,:])
+        self.sgn_Mh_psi[:,:] = sgn_Mh(self.psi[:,:],self.M,dc.h)
+        self.D_psi_fun()
+        self.DD_psi_fun()
+        self.M_switch()
+        self.D_stilda_fun()
+        self.D_tilda_fun()
+
+        # Calculating the L_psi value
+        self.Lpsi[:,:] = self.sgn_Mh_psi[:,:] * (1 - ( (self.Di_tilda[:,:]/dc.h)**2 + (self.Dj_tilda[:,:]/dc.h)**2 )**0.5)
+
+    def Lpsi_star_fun(self,dc,fc):
+        # Calculating the neccessary values for Lpsi using the class funcitons
+        self.sgn_psi_star[:,:] = sgn(self.psi_star[:,:])
+        self.sgn_Mh_psi_star[:,:] = sgn_Mh(self.psi_star[:,:],self.M,dc.h)
+        self.D_psi_star_fun()
+        self.DD_psi_star_fun()
+        self.M_switch_star()
+        self.D_stilda_star_fun()
+        self.D_tilda_star_fun()
+
+        # Calculating the L_psi value
+        self.Lpsi_star[:,:] = self.sgn_Mh_psi_star[:,:] * (1 - ( (self.Di_tilda_star[:,:]/dc.h)**2 + (self.Dj_tilda_star[:,:]/dc.h)**2 )**0.5)
+
+    def D_psi_fun(self):
+        # Initializing the arrays to the correct dimentsions
+        Dpi_psi       = np.zeros(self.psi.shape)# + np.nan
+        Dni_psi       = np.zeros(self.psi.shape)# + np.nan
+        Dpj_psi       = np.zeros(self.psi.shape)# + np.nan
+        Dnj_psi       = np.zeros(self.psi.shape)# + np.nan
+        # Dpi_shift_psi = np.zeros(self.psi.shape)# + np.nan
+        # Dni_shift_psi = np.zeros(self.psi.shape)# + np.nan
+        # Dpj_shift_psi = np.zeros(self.psi.shape)# + np.nan
+        # Dnj_shift_psi = np.zeros(self.psi.shape)# + np.nan
+
+        # Getting the D psi values centered around i,j
+        Dpi_psi[1:-1,1:-1] = self.psi[2:,1:-1] - self.psi[1:-1,1:-1]
+        Dni_psi[1:-1,1:-1] = self.psi[1:-1,1:-1] - self.psi[:-2,1:-1]
+        Dpj_psi[1:-1,1:-1] = self.psi[1:-1,2:] - self.psi[1:-1,1:-1]
+        Dnj_psi[1:-1,1:-1] = self.psi[1:-1,1:-1] - self.psi[1:-1,:-2]
+
+        # Getting the D psi values centered around i+1,j
+        # Dpi_shift_psi[1:-2,1:-1] = self.psi[3:,1:-1] - self.psi[2:-1,1:-1]
+        # Dni_shift_psi[1:-1,1:-1] = self.psi[2:,1:-1] - self.psi[1:-1,1:-1]
+        # Dpj_shift_psi[1:-1,1:-2] = self.psi[1:-1,3:] - self.psi[1:-1,2:-1]
+        # Dnj_shift_psi[1:-1,1:-1] = self.psi[1:-1,2:] - self.psi[1:-1,1:-1]
+
+        # Combining all of the positive and negative arrays
+        #   Note: The output has negative in the [0,:,:], positive in the [1,:,:]
+        # self.Di_shift_psi = np.array([Dni_shift_psi,Dpi_shift_psi])
+        # self.Dj_shift_psi = np.array([Dnj_shift_psi,Dpj_shift_psi])
+        self.Di_psi = np.array([Dni_psi,Dpi_psi])
+        self.Dj_psi = np.array([Dnj_psi,Dpj_psi])
+
+    def D_psi_star_fun(self):
+        # Initializing the arrays to the correct dimentsions
+        Dpi_psi_star       = np.zeros(self.psi_star.shape)# + np.nan
+        Dni_psi_star       = np.zeros(self.psi_star.shape)# + np.nan
+        Dpj_psi_star       = np.zeros(self.psi_star.shape)# + np.nan
+        Dnj_psi_star       = np.zeros(self.psi_star.shape)# + np.nan
+
+        # Getting the D psi values centered around i,j
+        Dpi_psi_star[1:-1,1:-1] = self.psi_star[2:,1:-1] - self.psi_star[1:-1,1:-1]
+        Dni_psi_star[1:-1,1:-1] = self.psi_star[1:-1,1:-1] - self.psi_star[:-2,1:-1]
+        Dpj_psi_star[1:-1,1:-1] = self.psi_star[1:-1,2:] - self.psi_star[1:-1,1:-1]
+        Dnj_psi_star[1:-1,1:-1] = self.psi_star[1:-1,1:-1] - self.psi_star[1:-1,:-2]
+
+
+        # Combining all of the positive and negative arrays
+        #   Note: The output has negative in the [0,:,:], positive in the [1,:,:]
+        self.Di_psi_star = np.array([Dni_psi_star,Dpi_psi_star])
+        self.Dj_psi_star = np.array([Dnj_psi_star,Dpj_psi_star])
+
+    def DD_psi_fun(self):
+
+        # Getting the D psi values centered around i,j
+        self.DDi_psi[1:-1,1:-1] = self.psi[2:,1:-1] + self.psi[:-2,1:-1] - 2*self.psi[1:-1,1:-1]
+        self.DDj_psi[1:-1,1:-1] = self.psi[1:-1,2:] + self.psi[1:-1,:-2] - 2*self.psi[1:-1,1:-1]
+
+        # Getting the D psi values centered around i+1,j
+        self.DDi_pshift_psi[1:-2,1:-1] = self.psi[3:,1:-1] + self.psi[1:-2,1:-1] - 2*self.psi[2:-1,1:-1]
+        self.DDi_nshift_psi[1:-2,1:-1] = self.psi[2:-1,1:-1] + self.psi[:-3,1:-1] - 2*self.psi[1:-2,1:-1]
+        self.DDj_pshift_psi[1:-1,1:-2] = self.psi[1:-1,3:] + self.psi[1:-1,1:-2] - 2*self.psi[1:-1,2:-1]
+        self.DDj_nshift_psi[1:-1,1:-2] = self.psi[1:-1,2:-1] + self.psi[1:-1,:-3] - 2*self.psi[1:-1,1:-2]
+
+        # Applying Boundaries
+        def set_bnd_temp(arr):
+            arr[:,1] = arr[:,2]
+            arr[:,0] = arr[:,2]
+            arr[:,-1] = arr[:,-3]
+            arr[:,-2] = arr[:,-3]
+            return arr
+
+        self.DDi_psi = set_bnd_temp(self.DDi_psi)
+        self.DDj_psi = set_bnd_temp(self.DDj_psi)
+        self.DDi_pshift_psi = set_bnd_temp(self.DDi_pshift_psi)
+        self.DDi_nshift_psi = set_bnd_temp(self.DDi_nshift_psi)
+        self.DDj_pshift_psi = set_bnd_temp(self.DDj_pshift_psi)
+        self.DDj_nshift_psi = set_bnd_temp(self.DDj_nshift_psi)
+
+    def DD_psi_star_fun(self):
+
+        # Getting the D psi values centered around i,j
+        self.DDi_psi_star[1:-1,1:-1] = self.psi_star[2:,1:-1] + self.psi_star[:-2,1:-1] - 2*self.psi_star[1:-1,1:-1]
+        self.DDj_psi_star[1:-1,1:-1] = self.psi_star[1:-1,2:] + self.psi_star[1:-1,:-2] - 2*self.psi_star[1:-1,1:-1]
+
+        # Getting the D psi values centered around i+1,j
+        self.DDi_pshift_psi_star[1:-2,1:-1] = self.psi_star[3:,1:-1] + self.psi_star[1:-2,1:-1] - 2*self.psi_star[2:-1,1:-1]
+        self.DDi_nshift_psi_star[1:-2,1:-1] = self.psi_star[2:-1,1:-1] + self.psi_star[:-3,1:-1] - 2*self.psi_star[1:-2,1:-1]
+        self.DDj_pshift_psi_star[1:-1,1:-2] = self.psi_star[1:-1,3:] + self.psi_star[1:-1,1:-2] - 2*self.psi_star[1:-1,2:-1]
+        self.DDj_nshift_psi_star[1:-1,1:-2] = self.psi_star[1:-1,2:-1] + self.psi_star[1:-1,:-3] - 2*self.psi_star[1:-1,1:-2]
+
+        # Applying Boundaries
+        def set_bnd_temp(arr):
+            arr[:,1] = arr[:,2]
+            arr[:,0] = arr[:,2]
+            arr[:,-1] = arr[:,-3]
+            arr[:,-2] = arr[:,-3]
+            return arr
+
+        self.DDi_psi_star = set_bnd_temp(self.DDi_psi_star)
+        self.DDj_psi_star = set_bnd_temp(self.DDj_psi_star)
+        self.DDi_pshift_psi_star = set_bnd_temp(self.DDi_pshift_psi_star)
+        self.DDi_nshift_psi_star = set_bnd_temp(self.DDi_nshift_psi_star)
+        self.DDj_pshift_psi_star = set_bnd_temp(self.DDj_pshift_psi_star)
+        self.DDj_nshift_psi_star = set_bnd_temp(self.DDj_nshift_psi_star)
+
+    def M_switch(self):
+        # Combining the DD functions for positive and negative
+        DDi_p = np.array([self.DDi_psi,self.DDi_pshift_psi])
+        DDj_p = np.array([self.DDj_psi,self.DDj_pshift_psi])
+        DDi_n = np.array([self.DDi_psi,self.DDi_nshift_psi])
+        DDj_n = np.array([self.DDj_psi,self.DDj_nshift_psi])
+
+        # Establishing a bool array for indexing
+        min_ind_pi = np.array(np.zeros(DDi_p.shape),dtype=np.bool)
+        min_ind_pj = np.array(np.zeros(DDj_p.shape),dtype=np.bool)
+        min_ind_ni = np.array(np.zeros(DDi_n.shape),dtype=np.bool)
+        min_ind_nj = np.array(np.zeros(DDj_n.shape),dtype=np.bool)
+
+        # Getting the absolute minimum values
+        abs_min_pi = np.nanmin(np.absolute(DDi_p[:,1:-1,1:-1]),axis=0)
+        abs_min_pj = np.nanmin(np.absolute(DDj_p[:,1:-1,1:-1]),axis=0)
+        abs_min_ni = np.nanmin(np.absolute(DDi_n[:,1:-1,1:-1]),axis=0)
+        abs_min_nj = np.nanmin(np.absolute(DDj_n[:,1:-1,1:-1]),axis=0)
+
+        # Getting the indexes by using the absolute value of the minimums
+        min_ind_pi[:,1:-1,1:-1] = abs_min_pi == np.absolute(DDi_p[:,1:-1,1:-1])
+        min_ind_pj[:,1:-1,1:-1] = abs_min_pj == np.absolute(DDj_p[:,1:-1,1:-1])
+        min_ind_ni[:,1:-1,1:-1] = abs_min_ni == np.absolute(DDi_n[:,1:-1,1:-1])
+        min_ind_nj[:,1:-1,1:-1] = abs_min_nj == np.absolute(DDj_n[:,1:-1,1:-1])
+
+        # Finally putting the final values in the switch function array
+        self.Mi_p[min_ind_pi[0,:,:]] = DDi_p[0,min_ind_pi[0,:,:]]
+        self.Mi_p[min_ind_pi[1,:,:]] = DDi_p[1,min_ind_pi[1,:,:]]
+
+        self.Mj_p[min_ind_pj[0,:,:]] = DDj_p[0,min_ind_pj[0,:,:]]
+        self.Mj_p[min_ind_pj[1,:,:]] = DDj_p[1,min_ind_pj[1,:,:]]
+
+        self.Mi_n[min_ind_ni[0,:,:]] = DDi_n[0,min_ind_ni[0,:,:]]
+        self.Mi_n[min_ind_ni[1,:,:]] = DDi_n[1,min_ind_ni[1,:,:]]
+
+        self.Mj_n[min_ind_nj[0,:,:]] = DDj_n[0,min_ind_nj[0,:,:]]
+        self.Mj_n[min_ind_nj[1,:,:]] = DDj_n[1,min_ind_nj[1,:,:]]
+
+    def M_switch_star(self):
+        # Combining the DD functions for positive and negative
+        DDi_p = np.array([self.DDi_psi_star,self.DDi_pshift_psi_star])
+        DDj_p = np.array([self.DDj_psi_star,self.DDj_pshift_psi_star])
+        DDi_n = np.array([self.DDi_psi_star,self.DDi_nshift_psi_star])
+        DDj_n = np.array([self.DDj_psi_star,self.DDj_nshift_psi_star])
+
+        # Establishing a bool array for indexing
+        min_ind_pi = np.array(np.zeros(DDi_p.shape),dtype=np.bool)
+        min_ind_pj = np.array(np.zeros(DDj_p.shape),dtype=np.bool)
+        min_ind_ni = np.array(np.zeros(DDi_n.shape),dtype=np.bool)
+        min_ind_nj = np.array(np.zeros(DDj_n.shape),dtype=np.bool)
+
+        # Getting the absolute minimum values
+        abs_min_pi = np.nanmin(np.absolute(DDi_p[:,1:-1,1:-1]),axis=0)
+        abs_min_pj = np.nanmin(np.absolute(DDj_p[:,1:-1,1:-1]),axis=0)
+        abs_min_ni = np.nanmin(np.absolute(DDi_n[:,1:-1,1:-1]),axis=0)
+        abs_min_nj = np.nanmin(np.absolute(DDj_n[:,1:-1,1:-1]),axis=0)
+
+        # Getting the indexes by using the absolute value of the minimums
+        min_ind_pi[:,1:-1,1:-1] = abs_min_pi == np.absolute(DDi_p[:,1:-1,1:-1])
+        min_ind_pj[:,1:-1,1:-1] = abs_min_pj == np.absolute(DDj_p[:,1:-1,1:-1])
+        min_ind_ni[:,1:-1,1:-1] = abs_min_ni == np.absolute(DDi_n[:,1:-1,1:-1])
+        min_ind_nj[:,1:-1,1:-1] = abs_min_nj == np.absolute(DDj_n[:,1:-1,1:-1])
+
+        # Finally putting the final values in the switch function array
+        self.Mi_p_star[min_ind_pi[0,:,:]] = DDi_p[0,min_ind_pi[0,:,:]]
+        self.Mi_p_star[min_ind_pi[1,:,:]] = DDi_p[1,min_ind_pi[1,:,:]]
+
+        self.Mj_p_star[min_ind_pj[0,:,:]] = DDj_p[0,min_ind_pj[0,:,:]]
+        self.Mj_p_star[min_ind_pj[1,:,:]] = DDj_p[1,min_ind_pj[1,:,:]]
+
+        self.Mi_n_star[min_ind_ni[0,:,:]] = DDi_n[0,min_ind_ni[0,:,:]]
+        self.Mi_n_star[min_ind_ni[1,:,:]] = DDi_n[1,min_ind_ni[1,:,:]]
+
+        self.Mj_n_star[min_ind_nj[0,:,:]] = DDj_n[0,min_ind_nj[0,:,:]]
+        self.Mj_n_star[min_ind_nj[1,:,:]] = DDj_n[1,min_ind_nj[1,:,:]]
+
+    def D_stilda_fun(self):
+        self.Di_ptilda = self.Di_psi[1,:,:] - (1/2) * self.Mi_p
+        self.Di_ntilda = self.Di_psi[0,:,:] - (1/2) * self.Mi_n
+        self.Dj_ptilda = self.Dj_psi[1,:,:] - (1/2) * self.Mj_p
+        self.Dj_ntilda = self.Dj_psi[0,:,:] - (1/2) * self.Mj_n
+
+    def D_stilda_star_fun(self):
+        self.Di_ptilda_star = self.Di_psi_star[1,:,:] - (1/2) * self.Mi_p_star
+        self.Di_ntilda_star = self.Di_psi_star[0,:,:] - (1/2) * self.Mi_n_star
+        self.Dj_ptilda_star = self.Dj_psi_star[1,:,:] - (1/2) * self.Mj_p_star
+        self.Dj_ntilda_star = self.Dj_psi_star[0,:,:] - (1/2) * self.Mj_n_star
+
+    def D_tilda_fun(self):
+        # Handling the otherwise condition
+        self.Di_tilda[:,:] = 0.5*(self.Di_ptilda + self.Di_ntilda)
+        self.Dj_tilda[:,:] = 0.5*(self.Dj_ptilda + self.Dj_ntilda)
+
+        # Condition 1
+        cond1i = np.logical_and(self.sgn_psi*self.Di_psi[1,:,:] < 0,
+                               self.sgn_psi*self.Di_psi[0,:,:] < -self.sgn_psi*self.Di_psi[1,:,:])
+        cond2i = np.logical_and(self.sgn_psi*self.Di_psi[0,:,:] > 0,
+                               self.sgn_psi*self.Di_psi[1,:,:] > -self.sgn_psi*self.Di_psi[0,:,:])
+
+        cond1j = np.logical_and(self.sgn_psi*self.Dj_psi[1,:,:] < 0,
+                               self.sgn_psi*self.Dj_psi[0,:,:] < -self.sgn_psi*self.Dj_psi[1,:,:])
+        cond2j = np.logical_and(self.sgn_psi*self.Dj_psi[0,:,:] > 0,
+                               self.sgn_psi*self.Dj_psi[1,:,:] > -self.sgn_psi*self.Dj_psi[0,:,:])
+
+        # Using the defined conditions to set the values of the array
+        self.Di_tilda[cond1i] = self.Di_ptilda[cond1i]
+        self.Di_tilda[cond2i] = self.Di_ntilda[cond2i]
+
+        self.Dj_tilda[cond1j] = self.Dj_ptilda[cond1j]
+        self.Dj_tilda[cond2j] = self.Dj_ntilda[cond2j]
+
+    def D_tilda_star_fun(self):
+        # Handling the otherwise condition
+        self.Di_tilda_star[:,:] = 0.5*(self.Di_ptilda_star + self.Di_ntilda_star)
+        self.Dj_tilda_star[:,:] = 0.5*(self.Dj_ptilda_star + self.Dj_ntilda_star)
+
+        # Condition 1
+        cond1i = np.logical_and(self.sgn_psi_star*self.Di_psi_star[1,:,:] < 0,
+                                self.sgn_psi_star*self.Di_psi_star[0,:,:] < -self.sgn_psi_star*self.Di_psi_star[1,:,:])
+        cond2i = np.logical_and(self.sgn_psi_star*self.Di_psi_star[0,:,:] > 0,
+                                self.sgn_psi_star*self.Di_psi_star[1,:,:] > -self.sgn_psi_star*self.Di_psi_star[0,:,:])
+
+        cond1j = np.logical_and(self.sgn_psi_star*self.Dj_psi_star[1,:,:] < 0,
+                                self.sgn_psi_star*self.Dj_psi_star[0,:,:] < -self.sgn_psi_star*self.Dj_psi_star[1,:,:])
+        cond2j = np.logical_and(self.sgn_psi_star*self.Dj_psi_star[0,:,:] > 0,
+                                self.sgn_psi_star*self.Dj_psi_star[1,:,:] > -self.sgn_psi_star*self.Dj_psi_star[0,:,:])
+
+        # Using the defined conditions to set the values of the array
+        self.Di_tilda_star[cond1i] = self.Di_ptilda_star[cond1i]
+        self.Di_tilda_star[cond2i] = self.Di_ntilda_star[cond2i]
+
+        self.Dj_tilda_star[cond1j] = self.Dj_ptilda_star[cond1j]
+        self.Dj_tilda_star[cond2j] = self.Dj_ntilda_star[cond2j]
+
+    def calc_f_arr(self,M,h):
+        self.f[1:-1,1:-1] = get_f(M,h,self.psi[1:-1,1:-1],self.f[1:-1,1:-1])
+        self.f_ishift[1:-1,1:-1] = get_f(M,h,self.psi_ishift[1:-1,1:-1],self.f_ishift[1:-1,1:-1])
+        self.f_jshift[1:-1,1:-1] = get_f(M,h,self.psi_jshift[1:-1,1:-1],self.f_jshift[1:-1,1:-1])
+
+    # def calc_f_der(self):
+    #     # This gets the derivative of df/dpsi in the x and y directions centered
+    #     #   about (i+1/2,j) and (i,j+1/2)
+    #     self.df_dpsi_x[1:-1,:] = (self.f[2:,:] - self.f[1:-1,:])/(self.psi[2:,:] - self.psi[1:-1,:])
+    #     self.df_dpsi_y[:,1:-1] = (self.f[:,2:] - self.f[:,1:-1])/(self.psi[:,2:] - self.psi[:,1:-1])
+
+    def calc_f_der_an(self,h):
+        # Calculating the analytic derivative of df(psi)/dpsi
+        cond1_i = np.logical_xor(self.f_ishift == 0, self.f_ishift ==1)
+        self.df_dpsi_ian[cond1_i] = 0
+        self.df_dpsi_ian[~cond1_i] = 0.5 * (1/(self.M * h) + (1/(self.M*h))*np.cos(np.pi*self.psi_ishift[~cond1_i]/(self.M*h)))
+
+        cond1_j = np.logical_xor(self.f_jshift == 0, self.f_jshift ==1)
+        self.df_dpsi_jan[cond1_j] = 0
+        self.df_dpsi_jan[~cond1_j] = 0.5 * (1/(self.M * h) + (1/(self.M*h))*np.cos(np.pi*self.psi_jshift[~cond1_j]/(self.M*h)))
+
+    def get_psi_grad(self,h):
+        # This calculates the gradients of psi in the x and y direction
+        #   NOTE: They are centered about (i+1/2,j) and (i,j+1/2)
+        self.dpsi_dx[1:-1,1:-1] = (self.psi[2:,1:-1] - self.psi[1:-1,1:-1])/h
+        self.dpsi_dy[1:-1,1:-1] = (self.psi[1:-1,2:] - self.psi[1:-1,1:-1])/h
+
+    def calc_kappa(self,h):
+        # Calculating the gradients centered about (i+1/2,j+1/2)
+        self.dpsi_dx_jshift[1:-1,1:-1] = 0.5*(self.dpsi_dx[1:-1,2:] + self.dpsi_dx[1:-1,1:-1])
+        self.dpsi_dy_ishift[1:-1,1:-1] = 0.5*(self.dpsi_dy[2:,1:-1] + self.dpsi_dy[1:-1,1:-1])
+
+        # Calculating the magnitude of the shifted gradients centered at (i+1/2,j+1/2)
+        mag_psi_grad = ( (self.dpsi_dx_jshift[:,:])**2 + (self.dpsi_dy_ishift[:,:])**2 )**0.5
+        mag_psi_grad[mag_psi_grad==0] = np.nan
+
+        # Calculating the psi_x and psi_y terms centered at (i+1/2,j+1/2)
+        self.psi_x[1:-1,1:-1] = (self.psi[2:,2:] + self.psi[2:,1:-1] - self.psi[1:-1,2:] - self.psi[1:-1,1:-1])*(1/(2*h))
+        self.psi_y[1:-1,1:-1] = (self.psi[2:,2:] - self.psi[2:,1:-1] + self.psi[1:-1,2:] - self.psi[1:-1,1:-1])*(1/(2*h))
+
+        # Calculating Kappa
+        self.kappa[1:-1,1:-1] = ( (self.psi_x[1:-1,1:-1]/mag_psi_grad[1:-1,1:-1])
+                                + (self.psi_x[1:-1, :-2]/mag_psi_grad[1:-1, :-2])
+                                - (self.psi_x[ :-2,1:-1]/mag_psi_grad[ :-2,1:-1])
+                                - (self.psi_x[ :-2, :-2]/mag_psi_grad[ :-2, :-2])
+                                + (self.psi_y[1:-1,1:-1]/mag_psi_grad[1:-1,1:-1])
+                                - (self.psi_y[1:-1, :-2]/mag_psi_grad[1:-1, :-2])
+                                + (self.psi_y[ :-2,1:-1]/mag_psi_grad[ :-2,1:-1])
+                                - (self.psi_y[ :-2, :-2]/mag_psi_grad[ :-2, :-2]) ) * (1/(2*h))
+
+        # Calculating the shifted kappa values
+        self.kappa_ishift[1:-1,:] = 0.5*(self.kappa[2:,:] + self.kappa[1:-1,:])
+        self.kappa_jshift[:,1:-1] = 0.5*(self.kappa[:,2:] + self.kappa[:,1:-1])
+
+    def calc_F_gamma(self,gamma,M,h):
+        # Calculating a f array for determining fluid properties
+        # self.calc_f_arr(M,h)
+
+        # Calculating a gradient in both directions for psi
+        self.get_psi_grad(h)
+
+        # Calculating the derivative of f
+        # self.calc_f_der()
+        self.calc_f_der_an(h)
+
+        # Calculating Kappa
+        self.calc_kappa(h)
+
+        # Getting the final Force values
+        self.F_gamma_x = -gamma*self.kappa_ishift*self.df_dpsi_ian[:,:]*self.dpsi_dx[:,:]
+        self.F_gamma_x[np.isnan(self.F_gamma_x)] = 0
+        self.F_gamma_x[np.logical_xor(self.f == 0,self.f==1)] = 0
+        self.F_gamma_y = -gamma*self.kappa_jshift*self.df_dpsi_jan[:,:]*self.dpsi_dy[:,:]
+        self.F_gamma_y[np.isnan(self.F_gamma_y)] = 0
+        self.F_gamma_y[np.logical_xor(self.f == 0,self.f==1)] = 0
 
 class domain_class:
     def __init__(self, **kwargs):
@@ -981,6 +1593,11 @@ class domain_class:
 
         self.rho   = 1e3   # kg/m^3
         self.nu    = 1e-6  # m^2/s
+        self.gamma = 0.006
+        self.rho_l = 1000.
+        self.rho_g = 100.#1.0
+        self.mu_l  = 1e-3#1e-3
+        self.mu_g  = 1e-5#1e-8
         self.check_dt = True
 
     def set_bounds(self):
@@ -1113,6 +1730,11 @@ class domain_class:
 class flow_class:
     def __init__(self,domain_class):
         dc = domain_class
+
+        # Initializing Property Arrays
+        self.rho = np.zeros(dc.domain_map.shape) + dc.rho_l
+        self.mu  = np.zeros(dc.domain_map.shape) + dc.mu_l
+
         # Intializing the velocity Array
         self.u = np.zeros((dc.N_x + 2, dc.N_y + 2))
         self.v = np.zeros((dc.N_x + 2, dc.N_y + 2))
@@ -1289,3 +1911,5 @@ class option_class:
         self.min_Ploops = int(10)
         self.max_Ploops = int(1000)
         self.Ptol = 1e-1
+
+        self.M = 3

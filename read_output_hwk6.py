@@ -116,7 +116,7 @@ def make_plot(fig, mp, x, y, u, v, **kwargs):
                 # cbar.draw_all()
                 # cbar.update_ticks()
             except Exception as e:
-                print(e)
+                # print(e)
                 cbar = fig.colorbar(my_cm,ax=mp)
                 # cb1 = mpl.colorbar(mp, cmap=cmap,norm=norm)
 
@@ -134,8 +134,8 @@ def make_plot(fig, mp, x, y, u, v, **kwargs):
 
 
 # --> Defining the hdf5 file reading variables
-mb_num = 31
-skip_num = 25
+mb_num = 33
+skip_num = 0
 my_dpi = 100
 my_fps = 30
 my_file    = "./Output/hwk6/run_" + str(mb_num) + ".h5"
@@ -241,6 +241,7 @@ def animate(i):
     # M = np.hypot(u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T)
     # my_plot1.quiver(x, y, u[i,1:-1,1:-1].T,v[i,1:-1,1:-1].T, M, linewidth=0.1, edgecolor=(0,0,0),cmap="jet")
     my_plot1.set_title(str(round(t[i],6)))
+    my_plot1.set_ylabel("Velocity")
 
     # --> PRESSURE FIELD
     my_plot3.clear()
@@ -252,13 +253,15 @@ def animate(i):
               sl_density=[0.9,1.0],
               sub_type=[],
               norm=True,
-              show_cbar=True,
+              show_cbar=False,
               show_block=np.isnan(P_i)
               )
     except Exception as e:
         print(e)
         exit()
         pass
+    my_plot3.set_ylabel("Pressure")
+
 
     # --> Level Set Field
     my_plot4.clear()
@@ -266,7 +269,7 @@ def animate(i):
     psi_i2[(psi_i < 0)] = np.nan
     # psi_i2[(psi_i2 > 0)] = np.nan
     try:
-        # my_plot4.contour(x[1:-1], y[1:-1],psi_i.T)
+        my_plot4.contour(x[1:-1], y[1:-1],psi_i.T)
         make_plot(fig, my_plot4, x[1:-1], y[1:-1],
               psi_i2.T,
               psi_i2.T,
@@ -275,7 +278,7 @@ def animate(i):
               sl_density=[0.9,1.0],
               sub_type=[],
               norm=False,
-              show_cbar=True,
+              show_cbar=False,
               show_block=None ##np.isnan(P_i)
               )
 
@@ -283,6 +286,19 @@ def animate(i):
         print(e)
         exit()
         pass
+    my_plot4.set_ylabel("Level Set")
+
+
+i = 0
+animate(i)
+plt.savefig("Homework/hwk6/run_" + str(mb_num) + "_st.png")
+last_t = 0.18
+dum = np.arange(len(t))
+cond = (t[:] < last_t)
+i = dum[cond][-1]
+animate(i)
+plt.savefig("Homework/hwk6/run_" + str(mb_num) + "_en.png")
+exit()
 
 num_frames = (len(t)//(skip_num+1))+1
 ani = FuncAnimation(fig,animate,frames=num_frames)
