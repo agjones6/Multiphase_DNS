@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 import h5py
 from numba import jit, cuda, vectorize, float64, float32, guvectorize
 import copy
-import cv2
+# import cv2
 
 # =============================================================================
 #                                 Functions
@@ -711,6 +711,7 @@ class bubble_class:
         self.N_b = 0
 
         # Pre-allocation
+        self.psi = np.zeros(u.shape)
         self.dpsi_dx = np.zeros(u.shape)
         self.dpsi_dy = np.zeros(u.shape)
         self.f = np.zeros(u.shape)
@@ -745,14 +746,20 @@ class bubble_class:
         self.N_b += 1
 
     def calc_all_psi_d(self):
-        # This gets a continuous level set function for the entire domain
-        self.psi = np.moveaxis(np.array(np.copy(self.psi_d[:])),0,-1)
-        self.psi = np.amax(self.psi,axis=-1)
+        if self.psi_d == []:
+            self.psi[:,:] = -1
+        else:
+            # This gets a continuous level set function for the entire domain
+            self.psi = np.moveaxis(np.array(np.copy(self.psi_d[:])),0,-1)
+            self.psi = np.amax(self.psi,axis=-1)
 
     def calc_all_psi_b(self):
-        # This gets a continuous level set function for the entire domain
-        self.psi = np.moveaxis(np.array(np.copy(self.psi_b[:])),0,-1)
-        self.psi = np.amin(self.psi,axis=-1)
+        if self.psi_d == []:
+            self.psi[:,:] = 1
+        else:
+            # This gets a continuous level set function for the entire domain
+            self.psi = np.moveaxis(np.array(np.copy(self.psi_b[:])),0,-1)
+            self.psi = np.amin(self.psi,axis=-1)
 
     def predict_psi(self,dc,fc):
         # This is the predictor step for the level set function
@@ -1595,9 +1602,9 @@ class domain_class:
         self.nu    = 1e-6  # m^2/s
         self.gamma = 0.006
         self.rho_l = 1000.
-        self.rho_g = 100.#1.0
+        self.rho_g = 1000.#1.0
         self.mu_l  = 1e-3#1e-3
-        self.mu_g  = 1e-5#1e-8
+        self.mu_g  = 1e-3#1e-8
         self.check_dt = True
 
     def set_bounds(self):
@@ -1626,9 +1633,22 @@ class domain_class:
         # This function is designed to draw a box on the domain with a given heighth.
         #   width, and angle. The origin of the box is the bottom left of the box
         letter = kwargs.get("letter","w")
+        origin_point = kwargs.get("origin_point","bl") # Bottom Left is the standard
 
         # Converting the angle to radians
         theta = (angle/360) * 2*np.pi
+
+        # Changing the origin point if the bottom left origin is not desired
+        if origin_point.lower() == "br":
+            origin[0] = origin[0] - w*np.sin(theta)
+            origin[1] = origin[1] + w*np.cos(theta)
+        if origin_point.lower() == "tl":
+            origin[0] = origin[0] - h*np.cos(theta)
+            origin[1] = origin[1] - h*np.sin(theta)
+        if origin_point.lower() == "tr":
+            origin[0] = origin[0] - h*np.cos(theta) - w*np.sin(theta)
+            origin[1] = origin[1] - h*np.sin(theta) + w*np.cos(theta)
+
 
         # Defining the width and height in terms of the 'pixelated' domain
         w = w/self.h
@@ -1656,6 +1676,37 @@ class domain_class:
                 #   -> L[0,:,:] = all x values
                 #   -> L[1,:,:] = all y values
                 L.append(dum_eq)
+            # Getting the logic for the block
+            grid = np.indices(self.domain_map.shape)
+            x = grid[0]
+            y = grid[1]
+
+            logic0 = np.logical_and(y >= L[0](x,y)[1,:,:], x >= L[0](x,y)[0,:,:])
+            logic1 = np.logical_and(y <= L[1](x,y)[1,:,:], x >= L[1](x,y)[0,:,:])
+            logic2 = np.logical_and(y <= L[2](x,y)[1,:,:], x <= L[2](x,y)[0,:,:])
+            logic3 = np.logical_and(y >= L[3](x,y)[1,:,:], x <= L[3](x,y)[0,:,:])
+        elif angle > -90 and angle < 0:
+            for i in range(len(P)):
+                # Defining slopes
+                slp.append( (P[i,1] - P[i-1,1])/(P[i,0] - P[i-1,0]))
+
+                # This makes an equation to get the line x,y with any given index
+                dum_eq = lambda x,y, i=i: np.array([P[i-1,0] + (y-P[i-1,1]) * (1/slp[i]), P[i-1,1] + (x-P[i-1,0])*slp[i]])
+
+                # Output of the line is [x_inp,y_inp,(x,y)]
+                #   -> L[0,:,:] = all x values
+                #   -> L[1,:,:] = all y values
+                L.append(dum_eq)
+
+            # Getting the logic for the block
+            grid = np.indices(self.domain_map.shape)
+            x = grid[0]
+            y = grid[1]
+
+            logic0 = np.logical_and(y <= L[0](x,y)[1,:,:], x >= L[0](x,y)[0,:,:])
+            logic1 = np.logical_and(y <= L[1](x,y)[1,:,:], x <= L[1](x,y)[0,:,:])
+            logic2 = np.logical_and(y >= L[2](x,y)[1,:,:], x <= L[2](x,y)[0,:,:])
+            logic3 = np.logical_and(y >= L[3](x,y)[1,:,:], x >= L[3](x,y)[0,:,:])
         elif angle == 90:
             for i in range(len(P)):
                 if i == 0 or i == 2:
@@ -1669,6 +1720,15 @@ class domain_class:
                 #   -> L[0,:,:] = all x values
                 #   -> L[1,:,:] = all y values
                 L.append(dum_eq)
+            # Getting the logic for the block
+            grid = np.indices(self.domain_map.shape)
+            x = grid[0]
+            y = grid[1]
+
+            logic0 = np.logical_and(y >= L[0](x,y)[1,:,:], x >= L[0](x,y)[0,:,:])
+            logic1 = np.logical_and(y <= L[1](x,y)[1,:,:], x >= L[1](x,y)[0,:,:])
+            logic2 = np.logical_and(y <= L[2](x,y)[1,:,:], x <= L[2](x,y)[0,:,:])
+            logic3 = np.logical_and(y >= L[3](x,y)[1,:,:], x <= L[3](x,y)[0,:,:])
         elif angle == 0:
             for i in range(len(P)):
                 if i == 1 or i == 3:
@@ -1682,21 +1742,19 @@ class domain_class:
                 #   -> L[0,:,:] = all x values
                 #   -> L[1,:,:] = all y values
                 L.append(dum_eq)
+            # Getting the logic for the block
+            grid = np.indices(self.domain_map.shape)
+            x = grid[0]
+            y = grid[1]
+
+            logic0 = np.logical_and(y >= L[0](x,y)[1,:,:], x >= L[0](x,y)[0,:,:])
+            logic1 = np.logical_and(y <= L[1](x,y)[1,:,:], x >= L[1](x,y)[0,:,:])
+            logic2 = np.logical_and(y <= L[2](x,y)[1,:,:], x <= L[2](x,y)[0,:,:])
+            logic3 = np.logical_and(y >= L[3](x,y)[1,:,:], x <= L[3](x,y)[0,:,:])
 
 
         # Getting a mesh of the grid indices flip([1].T) = y, [1].T = x
-        grid = np.indices(self.domain_map.shape)
-        x = grid[0]
-        y = grid[1]
-        # tst = L[0](x,y)
-        # print(tst.shape)
-        # print(x)
-        # print(y)
-        # dmn = np.logical_and(x.T > tst[:,:,0])#, y.T < tst[:,:,1])
-        logic0 = np.logical_and(y >= L[0](x,y)[1,:,:], x >= L[0](x,y)[0,:,:])
-        logic1 = np.logical_and(y <= L[1](x,y)[1,:,:], x >= L[1](x,y)[0,:,:])
-        logic2 = np.logical_and(y <= L[2](x,y)[1,:,:], x <= L[2](x,y)[0,:,:])
-        logic3 = np.logical_and(y >= L[3](x,y)[1,:,:], x <= L[3](x,y)[0,:,:])
+
         logic_all = np.logical_and(np.logical_and(np.logical_and(
                              logic0,
                              logic1),
@@ -1706,10 +1764,6 @@ class domain_class:
         # Changing the domain map
         self.domain_map[logic_all] = letter
 
-        # plt.contourf(logic_all.T)
-        # plt.show()
-        #
-        # exit()
 
     def check_dtype(self):
         if self.data_type == "float64":
@@ -1733,7 +1787,11 @@ class flow_class:
 
         # Initializing Property Arrays
         self.rho = np.zeros(dc.domain_map.shape) + dc.rho_l
+        self.rho_ishift = np.copy(self.rho[:,:])
+        self.rho_jshift = np.copy(self.rho[:,:])
         self.mu  = np.zeros(dc.domain_map.shape) + dc.mu_l
+        self.mu_ishift  = np.copy(self.mu[:,:])
+        self.mu_jshift  = np.copy(self.mu[:,:])
 
         # Intializing the velocity Array
         self.u = np.zeros((dc.N_x + 2, dc.N_y + 2))

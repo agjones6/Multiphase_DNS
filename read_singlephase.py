@@ -193,14 +193,13 @@ i_start = 0
 # exit()
 
 fig = plt.figure()
-my_plot1 = fig.add_subplot(3,1,1)#,projection='3d')
-my_plot3 = fig.add_subplot(3,1,2)#,projection='3d')
-my_plot4 = fig.add_subplot(3,1,3)#,projection='3d')
+my_plot1 = fig.add_subplot(2,1,1)#,projection='3d')
+my_plot2 = fig.add_subplot(2,1,2)#,projection='3d')
 
 # max_P = np.amax(P[1:-1,1:-1,:])
 # min_P = np.amin(P[1:-1,1:-1,:])
-# my_block = np.isnan(P_i[1:-1,1:-1,2])
-my_block = None
+my_block = np.isnan(P[1:-1,1:-1,2])
+# my_block = None
 def animate(i):
 
     # Calculating the index
@@ -233,7 +232,7 @@ def animate(i):
               sl_density=[5.0, 0.6],
               sub_type=["u","y"],
               show_0="x",
-              show_block=my_block
+              show_block=np.isnan(P_i)
               )
     except Exception as e:
         print(e)
@@ -243,9 +242,9 @@ def animate(i):
     my_plot1.set_title(str(round(t[i],6)))
 
     # --> PRESSURE FIELD
-    my_plot3.clear()
+    my_plot2.clear()
     try:
-        make_plot(fig, my_plot3, x[1:-1], y[1:-1],
+        make_plot(fig, my_plot2, x[1:-1], y[1:-1],
               P_i.T,
               P_i.T,
               plot_type="contourf",
@@ -255,30 +254,6 @@ def animate(i):
               show_cbar=True,
               show_block=np.isnan(P_i)
               )
-    except Exception as e:
-        print(e)
-        exit()
-        pass
-
-    # --> Level Set Field
-    my_plot4.clear()
-    psi_i2 = np.copy(psi_i[:,:])
-    psi_i2[(psi_i < 0)] = np.nan
-    # psi_i2[(psi_i2 > 0)] = np.nan
-    try:
-        # my_plot4.contour(x[1:-1], y[1:-1],psi_i.T)
-        make_plot(fig, my_plot4, x[1:-1], y[1:-1],
-              psi_i2.T,
-              psi_i2.T,
-              plot_type="contourf",
-              clear_plot=False,
-              sl_density=[0.9,1.0],
-              sub_type=[],
-              norm=False,
-              show_cbar=True,
-              show_block=None ##np.isnan(P_i)
-              )
-
     except Exception as e:
         print(e)
         exit()
