@@ -41,18 +41,20 @@ import pickle
 #                           Defining Simulation
 # =============================================================================
 # Class to contain all of the options for input
-run_num = 5
+run_num = 31
 
 # Values for the actual Boat
 w_boat = 6.553
 h_boat = 2.4892
 u_boat = 4.69
 bow_ang = 20
-wedge_ang = 90
-u_model = 10 * (1/2.24) # 4.47m/s = 10mph, 1m/s = 2.24mph
+wedge_ang = 45
+u_model = 5 * (1/2.24) # 4.47m/s = 10mph, 1m/s = 2.24mph
 C_l = 0
-ori_x_const = 0.2
 source_or_boat = "b"
+h_model_const = 1 # 1/20
+w_model_const = 1/2
+ori_x_model = ((w_boat + 0) - (w_boat*0.1) ) - ((1-w_model_const) * w_boat )
 
 # Options for linearly interpolating the boat speed
 use_linear_interp = True
@@ -62,13 +64,14 @@ linear_interp_time = 7.5
 
 # Options to help outflow
 mu_perc_mult = 0.1 # Percentange of the domain that has an increased viscosity
-mu_const =     1e6 # Constant multiplied to the mu values
+mu_const =     1e1 # Constant multiplied to the mu values
 
+# Choosing to  the domain or not
 show_my_domain = False
 
 oc = option_class()
 oc.pressure_solve = "value"
-oc.output_file = "./Output/testing5/run_" + str(run_num) + ".h5"
+oc.output_file = "./Output/testing6/run_" + str(run_num) + ".h5"
 oc.show_progress = False
 # oc.dt_max = 0.01
 oc.dt_multiplier = 0.01
@@ -84,6 +87,7 @@ elapsed_time = lambda st_t: time.time() - st_t
 if not show_my_domain:
     input("Confirm run " + oc.output_file)
 
+
 # --> Code for saving classes
 # testfile = open("new_file.obj","wb")
 # pickle.dump(oc,testfile)
@@ -94,9 +98,9 @@ if not show_my_domain:
 
 # Initializing the domain class
 dc = domain_class(N_x=0,
-                  N_y=40,
-                  L_x=60.0, #0.04*100, #0.06, # 1 ft ~= 0.3m
-                  L_y=28.0, #0.01*100, #0.06,
+                  N_y=60,
+                  L_x=20, #0.04*100, #0.06, # 1 ft ~= 0.3m
+                  L_y=25, #0.01*100, #0.06,
                   dt = 5e-6,
                   data_type=data_type
                   # dP_x=dP_analytic THis is not used
@@ -119,8 +123,8 @@ dc.N_t = dc.T/dc.dt
 
 dc.top    = "outflow"
 dc.bottom = "outflow"
-dc.left  = "source"
-dc.right = "outflow"
+dc.left   = "outflow"
+dc.right  = "outflow"
 dc.set_bounds()
 # print(dc.domain_map2)
 
@@ -135,28 +139,30 @@ dc.domain_map[str_index(dc.domain_map,"w")] = "w_0"
 # dc.draw_box(0.002, 0.005, 60, [0.01,0],letter="w")
 
 # ---> Boat shape
+# This is the zoomed in version of the boat with a wedge
 # w = 6.553m
 # h = 2.4892m
-h_model =  h_boat #dc.L_y*h_model_constant
-w_model =  w_boat #(6.553/2.4892) * h_model
-ori_x = dc.L_x * (ori_x_const)
+wedge_length = h_boat*0.06954*C_l
+h_model =  h_boat * h_model_const
+w_model =  w_boat * w_model_const#(6.553/2.4892) * h_model
+ori_x = 0
 ori_y = dc.L_y/2-(h_model/2)
 ang = bow_ang
 dc.draw_box(w_model, h_model, 90, [ori_x, ori_y],letter="w_1")
 # dc.draw_box(h, w/2, ang, [ori_x - h*np.sin(ang*(np.pi*2/360)), ori_y+h/2 + h*np.cos(ang*(np.pi*2/360))],letter="f")
-dc.draw_box(h_model, w_model/2, ang, [ori_x, ori_y+h_model/2],letter="f", origin_point="br")
-dc.draw_box(h_model, w_model/2, -ang, [ori_x, ori_y+h_model/2],letter="f")
+# dc.draw_box(h_model, w_model/2, ang, [ori_x, ori_y+h_model/2],letter="f", origin_point="br")
+# dc.draw_box(h_model, w_model/2, -ang, [ori_x, ori_y+h_model/2],letter="f")
 
 # ---> Wedge on the boat
 if C_l > 0:
-    w2,h2 = dc.h*3, h_model*0.06954*C_l # 0.06954 is the actual fraction of the boat height as defined here
-    dc.draw_box(w2, h2, wedge_ang, [ori_x+w_model*(4/5), ori_y+h_model],letter="w_1")
+    w2,h2 = dc.h*3 , wedge_length # 0.06954 is the actual fraction of the boat height as defined here
+    dc.draw_box(w2, h2, wedge_ang, [ori_x_model, ori_y+h_model],letter="w_1")
 
 # Changing Soure Numbers
-# dc.domain_map[1,:] = "s_0" # Left
-# dc.domain_map[dc.domain_map == "s"] = "s_0"
-# dc.domain_map[-1,:] = "s_1" # Right
-# dc.domain_map[:,-1] = "s_1" # Top
+# dc.domain_map[dc.domain_map == "s"] = "s_1"
+
+# Changing the boat to a source for shits and giggles
+# dc.domain_map[dc.domain_map == "w_1"] = "s_0"
 
 # wall velocities
 if "b" in source_or_boat:
@@ -176,7 +182,7 @@ else:
 dc.v_S    = [0, 0]
 dc.dP_x_S = [0. , 0]
 dc.dP_y_S = [0., 0.]
-dc.P_S = [dc.P, dc.P-(2.4*dc.L_y)] # -2.4 Pa/m
+dc.P_S = [dc.P, dc.P] # -2.4 Pa/m
 
 # Getting a mesh of x and y values
 # dc.x_grid = np.arange(0-dc.h/2,dc.L_x+dc.h/2,dc.h)
@@ -187,7 +193,8 @@ dc.update_bound_vals()
 
 # Showing a picture of the domain if desired
 if show_my_domain:
-    print(dc.domain_map.T)
+    for i in range(dc.N_y):
+        print(dc.domain_map.T[:,i])
     plt.imshow((np.fliplr(dc.C).T))
     # plt.contourf(dc.C.T)
     plt.show()
@@ -286,6 +293,7 @@ fc.u_ishift = set_ghost(dc.dm_ishift, fc.u_ishift, dc.u_B, type="u", source=dc.u
 fc.u[1:-1,1:-1] = u_new_fun(fc.u_ishift)
 
 # This reduces the viscosity in the right most 10% of the domain to help with outflow
+# This reduces the viscosity in the right most 10% of the domain to help with outflow
 dum_int = int(dc.N_x * mu_perc_mult)
 fc.mu[-dum_int:,:] = fc.mu[-dum_int:,:] * mu_const
 fc.mu_ishift[-dum_int:,:] = fc.mu_ishift[-dum_int:,:] * mu_const
@@ -310,6 +318,7 @@ while fc.t < dc.T: # and not user_done:
                 dc.u_S[0] = u_model_max
             else:
                 dc.u_B[1] = -1*u_model_max
+
 
     # --> Checking time step if desired
     if dc.check_dt:

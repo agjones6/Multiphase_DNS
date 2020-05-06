@@ -416,6 +416,8 @@ def set_ghost(map, val, u_B=0, **kwargs):
                 # --> Linear Extrapolation approach
                 val[i,j] = 101325 #- (0.02)*-2.4 #extrap(map,[i,j],val0,mult=1)
 
+            # elif "s" in cm:
+            #     pass
             elif not "f" in cm:
                 val[i,j] = 0
 
